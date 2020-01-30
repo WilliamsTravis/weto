@@ -1,9 +1,10 @@
-name: weto2
+name: weto
 channels:
   - conda-forge
 dependencies:
   - python=3.7
   - dask
+  - dask-jobqueue
   - descartes
   - distributed
   - geopandas

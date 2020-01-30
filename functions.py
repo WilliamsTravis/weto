@@ -13,7 +13,7 @@ import geopandas as gpd
 import h5py
 import numpy as np
 from fiona.errors import DriverError
-from geofeather import from_geofeather
+# from geofeather import from_geofeather
 from osgeo import gdal, ogr, osr
 from shapely.geometry import Point
 
@@ -22,7 +22,7 @@ ALBERS_PROJ4 = ("+proj=aea +lat_0=40 +lon_0=-96 +lat_1=20 +lat_2=60 +x_0=0 " +
                 "+y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs")
 
 # Wind Toolkit Point Coordinates
-WTK = from_geofeather("data/shapefiles/wtk_points.feather")
+# WTK = from_geofeather("data/shapefiles/wtk_points.feather")
 
 # FUNCTIONS
 def to_geo(data_frame, loncol="lon", latcol="lat", epsg=4326):
@@ -52,8 +52,8 @@ def to_geo(data_frame, loncol="lon", latcol="lat", epsg=4326):
     return gdf
 
 
-def rasterize(src, dst, attribute, resolution, epsg, extent, navalue=-9999,
-              all_touch=False, overwrite=False):
+def rasterize(src, dst, attribute, resolution, epsg, cols, rows, extent,
+              navalue=-9999, all_touch=False, overwrite=False):
     """Use GDAL Rasterize to rasterize a shapefile stored on disk and write
     outputs to a file.
 
@@ -78,6 +78,14 @@ def rasterize(src, dst, attribute, resolution, epsg, extent, navalue=-9999,
         Wether or not to associate vector values with all intersecting grid
         cells. (defaults to False)
     overwrite : boolean
+
+    Returns
+    -------
+    None
+
+    # Things to do:
+        1) alot of this geometry could be inferred from fewer inputs.
+        2) catch exceptions
     """
     # Overwrite existing file
     if os.path.exists(dst):
@@ -97,15 +105,11 @@ def rasterize(src, dst, attribute, resolution, epsg, extent, navalue=-9999,
     # Use transform to derive coordinates and dimensions
     xmin = extent[0]
     ymin = extent[1]
-    xmax = extent[2]
-    ymax = extent[3]
 
     # Create the target raster layer
-    cols = int((xmax - xmin)/resolution)
-    rows = int((ymax - ymin)/resolution) + 1
     trgt = gdal.GetDriverByName("GTiff").Create(dst, cols, rows, 1,
                                                 gdal.GDT_Float32)
-    trgt.SetGeoTransform((xmin, resolution, 0, ymax, 0, -resolution))
+    trgt.SetGeoTransform((xmin, resolution, 0, ymin, 0, resolution))
 
     # Add crs
     refs = osr.SpatialReference()
@@ -409,7 +413,7 @@ def shp_to_h5(shp, hdf, attribute, mode="w"):
 
 
 def to_raster(array, savepath, crs, geometry, navalue=-9999):
-    """Takes in a numpy.ndarray and writes data to a GeoTiff.
+    """Takes in a numpy array and writes data to a GeoTiff.
 
     Parameters
     ----------
