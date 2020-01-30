@@ -19,5 +19,6 @@ setup(
     author="Travis Williams",
     author_email="travis.williams@nrel.gov",
     install_requires=["dask", "dask-jobqueue", "descartes", "distributed",
-                      "geopandas", "h5py", "scipy", "tqdm"]
+                      "geopandas", "h5py", "rasterio", "scipy", "tqdm",
+		      "xarray"]
     )

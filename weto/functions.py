@@ -453,6 +453,11 @@ def to_raster(array, savepath, crs, geometry, navalue=-9999):
 class Data_Path:
     def __init__(self, folder_path):
         self.folder_path = folder_path
+        self.expand_check()
 
     def join(self, file_path):
         return os.path.join(self.folder_path, file_path)
+
+    def expand_check(self):
+        if "~" in self.folder_path:
+            self.folder_path =  os.path.expanduser(self.folder_path)

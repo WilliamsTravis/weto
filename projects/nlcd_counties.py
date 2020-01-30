@@ -6,7 +6,7 @@ Create a US cost surface layer based on NLCD land use type and county.
     - 30 meter resolution.
     - This has a unique Albers Concical Equal Area projection and under
       referenced. Try projecting to WGS 84 with nearest neighbor to maintain
-      NLCD category values and match other data sets. 
+      NLCD category values and match other data sets.
 2) Create a second NLCD raster layer with only these three values:
     - 52: "SHRUB/SCRUB"
     - 81: "PASTURELAND"
@@ -24,7 +24,7 @@ Create a US cost surface layer based on NLCD land use type and county.
 7) Get a land-value table with price, State-County-NLCD combinations, and
    index values.
 8) Join that land value table with the product table.
-9) Map the land value table's index to the product raster to create a new
+9) Map the land value table's index to the product raster to create a newcylinder charge fire-powered charger
    raster of land value indices.
 10) At some point we will need an acre grid of land-values. How will we decide
     which land-values from the 30m grid to assign to acre grid cell?
@@ -40,7 +40,8 @@ import xarray as xr
 from weto.functions import rasterize, Data_Path
 
 # Data Path
-dp = Data_Path("/scratch/twillia2/weto/data")
+# dp = Data_Path("/scratch/twillia2/weto/data")
+dp = Data_Path("~/Box/WETO 1.2/data")
 
 # Add in Translation to wgs 84
 # ...
@@ -57,9 +58,9 @@ xs = [geom[0] + geom[1] * i  for i in range(nx)]
 ys = [geom[3] + geom[-1] * i  for i in range(ny)]
 extent = [np.min(xs), np.min(ys), np.max(xs), np.max(ys)]
 
-# The geoid is a combo of state and county fips
+# The geoid is a combo of state and county fips - progress?
 if not os.path.exists(dp.join("rasters/county_gids.tif")):
-    rasterize(src=dp.join( "shapefiles/USA/tl_2017_us_county.shp"),
+    rasterize(src=dp.join("shapefiles/USA/tl_2017_us_county.shp"),
               dst=dp.join("rasters/county_gids.tif"),
               attribute="GEOID",
               resolution=geom[1],
@@ -69,7 +70,7 @@ if not os.path.exists(dp.join("rasters/county_gids.tif")):
               extent=extent,
               overwrite=True)
 
-# Multiply together - using subprocess for now - how to catch stdout live?
+# Multiply together - progress? how to catch stdout live?
 if not os.path.exists(dp.join("rasters/agcounty_product.tif")):
     sp.call(["gdal_calc.py",
              "-A", dp.join("rasters/county_gids.tif"),
@@ -82,7 +83,7 @@ if not os.path.exists(dp.join("rasters/agcounty_product.tif")):
 
 # We'll need both county and state names
 cdf = gpd.read_file(dp.join("shapefiles/USA/tl_2017_us_county.shp"))
-states = gpd.read_file(dp.join("shapefiles/USA/tl_2016_us_state.shp"))
+states = gpd.read_file(dp.join("shapefiles/USA/tl_2017_us_state.shp"))
 
 # if the product of these two sets of values results in all unique values...
 uags = np.array([52, 81, 82])
