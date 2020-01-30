@@ -1,0 +1,8 @@
+setup.py
+weto/__init__.py
+weto/functions.py
+weto.egg-info/PKG-INFO
+weto.egg-info/SOURCES.txt
+weto.egg-info/dependency_links.txt
+weto.egg-info/requires.txt
+weto.egg-info/top_level.txt
