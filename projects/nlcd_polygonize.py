@@ -17,11 +17,11 @@ import sys
 
 
 # To split our big file into 100 smaller ones...
-def split_extent(rfile, n=100):
+def split_extent(raster_file, n=100):
     """Split a raster files extent into n extent pieces"""
 
     # Get raster geometry
-    rstr = rasterio.open(rfile)
+    rstr = rasterio.open(raster_file)
     geom = rstr.get_transform()
     ny = rstr.height
     nx = rstr.width

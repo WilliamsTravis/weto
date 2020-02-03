@@ -12,10 +12,15 @@ import shutil
 import geopandas as gpd
 import h5py
 import numpy as np
+import rasterio
+import subprocess as sp
+import sys
 from fiona.errors import DriverError
 # from geofeather import from_geofeather
+from multiprocessing import Pool
 from osgeo import gdal, ogr, osr
 from shapely.geometry import Point
+from tqdm import tqdm
 
 # VARIABLES
 ALBERS_PROJ4 = ("+proj=aea +lat_0=40 +lon_0=-96 +lat_1=20 +lat_2=60 +x_0=0 " +
@@ -24,11 +29,14 @@ ALBERS_PROJ4 = ("+proj=aea +lat_0=40 +lon_0=-96 +lat_1=20 +lat_2=60 +x_0=0 " +
 # Wind Toolkit Point Coordinates
 # WTK = from_geofeather("data/shapefiles/wtk_points.feather")
 
+
 # FUNCTIONS
-def rasterize(src, dst, attribute, resolution, epsg, cols, rows, extent,
-              navalue=-9999, all_touch=False, overwrite=False):
-    """Use GDAL Rasterize to rasterize a shapefile stored on disk and write
-    outputs to a file.
+def rasterize(src, dst, attribute, epsg, transform, height, width,
+              navalue=-9999, all_touch=False, dtype=gdal.GDT_Float32,
+              overwrite=False):
+    """
+    Use GDAL Rasterize to rasterize a shapefile stored on disk and write
+    outputs to a file.  
 
     Parameters
     ----------
@@ -38,13 +46,15 @@ def rasterize(src, dst, attribute, resolution, epsg, cols, rows, extent,
         Destination path for the output raster.
     attribute : str
         Attribute name being rasterized.
-    resolution : int | float
-        Desired grid cell resolution.
     epsg : int
-        EPSG code associated with the data's coordinate reference system.
-    extent : list | list-like object
-        Target geographic extent of output raster in this order:
-        [xmin, ymin, xmax, ymax]
+        EPSG Code associated with target coordinate reference system.
+    transform : list | tuple | array
+        Geometric affine transformation:
+            (x-min, x-resolution, x-rotation, y-max, y-rotation, y-resoltution)
+    height : int
+        Number of y-axis grid cells.
+    width : int
+        Number of x-axis grid cells.
     na : int | float
         The value to assign to non-value grid cells. (defaults to -99999)
     all_touch : boolean
@@ -57,8 +67,10 @@ def rasterize(src, dst, attribute, resolution, epsg, cols, rows, extent,
     None
 
     # Things to do:
-        1) alot of this geometry could be inferred from fewer inputs.
-        2) catch exceptions
+        1) catch exceptions
+        2) print stdout progress:
+            https://gis.stackexchange.com/questions/237479/using-callback-with-
+            python-gdal-rasterizelayer ?
     """
     # Overwrite existing file
     if os.path.exists(dst):
@@ -76,13 +88,16 @@ def rasterize(src, dst, attribute, resolution, epsg, cols, rows, extent,
     layer = src_data.GetLayer()
 
     # Use transform to derive coordinates and dimensions
-    xmin = extent[0]
-    ymin = extent[1]
+    xmin, xres, xrot, ymax, yrot, yres = transform
+    xs = [xmin + xres * i  for i in range(width)]
+    ys = [ymax + yres * i  for i in range(height)]
+    nx = len(xs)
+    ny = len(ys)
 
     # Create the target raster layer
-    trgt = gdal.GetDriverByName("GTiff").Create(dst, cols, rows, 1,
-                                                gdal.GDT_Float32)
-    trgt.SetGeoTransform((xmin, resolution, 0, ymin, 0, resolution))
+    driver = gdal.GetDriverByName("GTiff")
+    trgt = driver.Create(dst, nx, ny, 1, dtype)
+    trgt.SetGeoTransform((xmin, xres, xrot, ymax, yrot, yres))  # xres again?
 
     # Add crs
     refs = osr.SpatialReference()
@@ -385,6 +400,40 @@ def shp_to_h5(shp, hdf, attribute, mode="w"):
         print("Sorry, I haven't figured mode=" + mode + " out yet.")
 
 
+# To split our big file into 100 smaller ones...
+def split_extent(raster_file, n=100):
+    """Split a raster files extent into n extent pieces"""
+
+    # Get raster geometry
+    rstr = rasterio.open(raster_file)
+    geom = rstr.get_transform()
+    ny = rstr.height
+    nx = rstr.width
+    xs = [geom[0] + geom[1] * i  for i in range(nx)]
+    ys = [geom[3] + geom[-1] * i  for i in range(ny)]
+
+    # Get number of chunks along each axis
+    nc = np.sqrt(n)
+
+    # Split coordinates into 10 pieces along both axes...
+    xchunks = np.array(np.array_split(xs, nc))
+    ychunks = np.array(np.array_split(ys, nc))
+    
+    # Get min/max of each coordinate chunk...
+    sides = lambda x: [min(x), max(x)]
+    xmap = map(sides, xchunks)
+    ymap = map(sides, ychunks)
+    xext = np.array([v for v in xmap])
+    yext = np.array([v for v in ymap])
+    
+    # Combine these in this order [min, ymin, max, ymax]....
+    extents = []
+    for xex in xext:
+        for yex in yext:
+            extents.append([xex[0], yex[0], xex[1], yex[1]])
+
+    return extents
+
 
 def to_geo(data_frame, loncol="lon", latcol="lat", epsg=4326):
     """ Convert a Pandas DataFrame object to a GeoPandas GeoDataFrame object.
@@ -447,6 +496,145 @@ def to_raster(array, savepath, crs, geometry, navalue=-9999):
     image.SetProjection(crs)
     image.GetRasterBand(1).WriteArray(array)
     image.GetRasterBand(1).SetNoDataValue(navalue)
+
+
+def tileit(arg):
+    """Use gdal to cut a raster into a smaller pieces"""
+
+    # Separate arguments
+    extent = arg[0]
+    rfile = arg[1]
+    chunk = arg[2]
+    outfolder = arg[3]
+
+    # Get everything in order
+    extent = [str(e) for e in extent]
+    chunk = "{:02d}".format(chunk)
+    outbase =  os.path.basename(rfile).split(".")[0]
+    outfile = os.path.join(outfolder, outbase + "_" + chunk + ".tif")
+
+    # Let's not overwrite - check the file is good first actually
+    if not os.path.exists(outfile):
+        sp.call(["gdalwarp",
+                 "-q",
+                 "-te", extent[0], extent[1], extent[2], extent[3],
+                 rfile,
+                 outfile],
+                stdout=sp.PIPE, stderr=sp.PIPE)
+
+    return outfile
+
+
+def tile_raster(raster_file, outfolder_path, ntiles, ncpu):
+    """ Take a raster and write n tiles from it.
+
+    Parameters
+    ----------
+    raster_file : str
+        Path to a GeoTiff
+    outfolder_path : str
+        Path to a folder in which to store tiles. Will create if not present.
+    ntiles : int
+        Number of tiles to write.
+    ncpu : int
+        Number of cpus to use for processing.
+
+    Returns
+    -------
+    None.
+
+
+    sample args
+    -----------
+    raster_path = '/scratch/twillia2/weto/data/rasters/agcounty_product.tif'
+    outfolder_path = '/scratch/twillia2/weto/data/rasters/chunks'
+    ntiles=100
+    ncpu=5
+    """
+    # Create tile folder
+    base_name = os.path.splitext(raster_file)[0]
+    out_folder = "_".join([base_name, "tiles"])
+    os.makedirs(out_folder, exist_ok=True)
+
+    # Get all of the extents needed to make n tiles
+    extents = split_extent(raster_file, n=ntiles)
+
+    # Wrap arguments into one object
+    raster_files = np.repeat(raster_file, len(extents))
+    chunknumbers = [i for i in range(len(extents))]
+    out_folders = np.repeat(out_folder, len(extents))
+    args = list(zip(extents, raster_files, chunknumbers, out_folders))
+
+    # Run each 
+    with Pool(ncpu) as pool:
+        tfiles = []
+        for tfile in tqdm(pool.imap(tileit, args), total=len(extents),
+                          position=0, file=sys.stdout):
+            tfiles.append(tfile)
+
+    return tfiles
+
+
+def try_get(mapvals, val, errval=-9999):
+    """Catching exceptions when vectorizing a dictionary mapping"""
+    try:
+        x = mapvals[val]
+    except KeyError:
+        x = errval
+    return x
+
+
+def vectorit(arg):
+    """Map dictionary values from one raster to another"""
+    # Get arguments
+    infile = arg[0]
+    outfile = arg[1]
+    mapvals = arg[2]
+    if not os.path.exists(outfile):
+        ds = gdal.Open(infile)
+        crs = ds.GetProjection()
+        geom = ds.GetGeoTransform()
+        array = ds.ReadAsArray()
+        try:
+            newarray = np.vectorize(try_get)(mapvals, array)
+            to_raster(newarray, outfile, crs, geom, navalue=-9999)
+        except Exception as e:
+            print("\n")
+            print(infile + ": ") 
+            print(e)
+            print("\n")
+
+
+def map_tiles(tilefiles, mapvals, outfolder, ncpu):
+    """Take a list of tiled raster files, map value from a dictionary to 
+    a list of output raster files"""
+
+    # Create the output paths
+    os.makedirs(outfolder, exist_ok=True)
+    outfiles = []
+    for f in tilefiles:
+        outfile = os.path.basename(f).replace("agcounty_product" ,"nlcd_index")
+        outfiles.append(os.path.join(outfolder, outfile))
+
+    # Bundle the arguments for vectorit (single function)
+    dicts = [mapvals.copy() for i in range(len(outfiles))]
+    args = list(zip(tilefiles, outfiles, dicts))
+
+    # Run it
+    with Pool(ncpu) as pool:
+        for f in tqdm(pool.imap(vectorit, args), total=len(outfiles),
+                      position=0, file=sys.stdout):
+            pass
+
+    # Return the output file paths
+    return outfiles
+
+
+def merge_tiles(tilefiles, outfile):
+    """Take a list of paths to tiles raster files and merge them into a
+    single raster.
+    """
+    gdal.merge
 
 
 # CLASSES

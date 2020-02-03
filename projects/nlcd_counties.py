@@ -24,24 +24,24 @@ Create a US cost surface layer based on NLCD land use type and county.
 7) Get a land-value table with price, State-County-NLCD combinations, and
    index values.
 8) Join that land value table with the product table.
-9) Map the land value table's index to the product raster to create a newcylinder charge fire-powered charger
+9) Map the land value table's index to the product raster to create a new
    raster of land value indices.
 10) At some point we will need an acre grid of land-values. How will we decide
     which land-values from the 30m grid to assign to acre grid cell?
 
 """
+
 import geopandas as gpd
 import numpy as np
 import os
 import pandas as pd
 import rasterio
 import subprocess as sp
-import xarray as xr
-from weto.functions import rasterize, Data_Path
+from osgeo import gdal
+from weto.functions import rasterize, Data_Path, tile_raster, map_tiles
 
 # Data Path
-# dp = Data_Path("/scratch/twillia2/weto/data")
-dp = Data_Path("~/Box/WETO 1.2/data")
+dp = Data_Path("/scratch/twillia2/weto/data")
 
 # Add in Translation to wgs 84
 # ...
@@ -49,25 +49,23 @@ dp = Data_Path("~/Box/WETO 1.2/data")
 # Add in calc for 52, 81, and 82
 # ...
 
+
 # get the target geometry
 nlcd = rasterio.open(dp.join("rasters/nlcd_2016_ag.tif"))
-geom = nlcd.get_transform()
-ny = nlcd.height
-nx = nlcd.width
-xs = [geom[0] + geom[1] * i  for i in range(nx)]
-ys = [geom[3] + geom[-1] * i  for i in range(ny)]
-extent = [np.min(xs), np.min(ys), np.max(xs), np.max(ys)]
+transform = nlcd.get_transform()
+height = nlcd.height
+width = nlcd.width
 
 # The geoid is a combo of state and county fips - progress?
 if not os.path.exists(dp.join("rasters/county_gids.tif")):
     rasterize(src=dp.join("shapefiles/USA/tl_2017_us_county.shp"),
               dst=dp.join("rasters/county_gids.tif"),
               attribute="GEOID",
-              resolution=geom[1],
-              cols=nx,
-              rows=ny,
+              transform=transform,
+              height=height,
+              width=width,
               epsg=4326,
-              extent=extent,
+              dtype=gdal.GDT_Float32,
               overwrite=True)
 
 # Multiply together - progress? how to catch stdout live?
@@ -77,7 +75,7 @@ if not os.path.exists(dp.join("rasters/agcounty_product.tif")):
              "-B", dp.join("rasters/nlcd_2016_ag.tif"),
              "--outfile=" + dp.join("rasters/agcounty_product.tif"),
              "--NoDataValue=-9999.",
-             "--calc=(A*B)"],
+             '--calc="(A*B)"'],
             stdout=sp.PIPE,
             stderr=sp.PIPE)
 
@@ -118,7 +116,7 @@ except AssertionError:
 
 # These are the values we need to associate with
 lookup = pd.read_csv(dp.join("tables/conus_cbe_lookup.csv"))
-lookup.columns = ['index', 'type',' dollar_ac']
+lookup.columns = ['code', 'type',' dollar_ac']
 
 # So we need a table with agid (ag + gid) associated values
 states = states[["STATEFP", "NAME"]]
@@ -143,25 +141,29 @@ reference = pd.concat(ref_dfs, sort=True)
 reference["type"] = reference["type"] + " " + reference["legend"]
 reference["rast_val"] = (reference["GEOID"].astype(int) *
                          reference["nlcd"].astype(int))
-reference.to_csv(dp.join("tables/nlcd_rast_lookup.csv"), index=False)
 
 # Now join the lookup to the reference using the type field
 reference = pd.merge(reference, lookup, on="type")
-map_vals = dict(zip(reference["rast_val"], reference["index"]))
-map_vals[0] = 0
+reference.to_csv(dp.join("tables/nlcd_rast_lookup.csv"), index=False)
+mapvals = dict(zip(reference["rast_val"], reference["index"]))
 
-# Now, can we map this index value to the agcounty_product raster?
-def mapping(v, m):
-    """map dictionary values (m) to xarray data array values (v)"""
-    mapit = lambda x, y: y[x]
-    return xr.apply_ufunc(mapit, v, m)
-agcounty = xr.open_rasterio(dp.join("rasters/agcounty_product.tif"))[0, :, :]
-index_raster = mapping(map_vals, agcounty)
+# I think I need to split this up, no luck yet with fancier methods
+tilefiles = tile_raster(dp.join("rasters/agcounty_product.tif"),
+                        dp.join("rasters/agcounty_product_tiles"),
+                        ntiles=100, ncpu=10)
 
+# Now, map the index values to the product values, write to new tiles
+outfolder = dp.join("rasters/nlcd_codes_tiles")
+tilefiles = map_tiles(tilefiles, mapvals, outfolder, ncpu=5)
 
+# Use gdal_merge to merge them back into a single raster
+outfile = dp.join("rasters/nlcd_codes.tif")
+if not os.path.exists(outfile):
+    call =  ["gdal_merge.py", "-o", outfile] + tilefiles
+    sp.call(call,
+            stdout=sp.PIPE,
+            stderr=sp.PIPE)
 
-# sample
-test = agcounty[0, 50000:50500, 50000:50500].data
-testout = np.vectorize(map_vals.get)(test)
+# Done
 
 
