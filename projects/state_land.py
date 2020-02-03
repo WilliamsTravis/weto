@@ -14,7 +14,6 @@ import rasterio
 from osgeo import gdal
 from weto.functions import Data_Path, rasterize
 
-
 # Data Path
 dp = Data_Path("/scratch/twillia2/weto/data")
 
@@ -22,15 +21,21 @@ dp = Data_Path("/scratch/twillia2/weto/data")
 lookup = pd.read_csv(dp.join("tables/conus_cbe_lookup.csv"))
 lookup.columns = ['code', 'type',' dollar_ac']
 
-# First add the codes from the lookup table to the shapefiles and rewrite
-state = gpd.read_file(dp.join("shapefiles/USA/tl_2016_us_aiannh.shp"))
+# Get just the state names
+state_lu = lookup[["type", "code"]][lookup["type"].str.contains("State Land")]
+get_state = lambda x: x[:x.index("State Land") - 1]
+state_lu["state_nm"] = state_lu["type"].apply(get_state)
+state_lu["state_nm"] = state_lu["state_nm"].astype(str)
 
-# This one only has one value
-codes = lookup["code"][lookup["type"] == "Tribal Land"].values[0]
+# First add the codes from the lookup table to the shapefiles and rewrite
+state = gpd.read_file(dp.join("shapefiles/USA/conus_padus_state.shp"))
+state["state_nm"] = state["state_nm"].astype(str)
+
+# Join state_lu with state
+state = state.merge(state_lu, on="state_nm", how="left")
 
 # Add this code into the shapefile and rewrite
-tribal["code"] = code
-tribal.to_file(dp.join("shapefiles/tribal/tl_2016_us_aiannh.shp"))
+state.to_file(dp.join("shapefiles/tribal/conus_padus_state.shp"))
 
 # get the target geometry
 nlcd = rasterio.open(dp.join("rasters/nlcd_2016_ag.tif"))
@@ -39,13 +44,13 @@ height = nlcd.height
 width = nlcd.width
 
 # Rasterize the code field to the finest resolution we'll use
-if not os.path.exists(dp.join("rasters/tribal_codes.tif")):
-    rasterize(src=dp.join("shapefiles/tribal/tl_2016_us_aiannh.shp"),
-              dst=dp.join("rasters/tribal_codes.tif"),
+if not os.path.exists(dp.join("rasters/state_land_codes.tif")):
+    rasterize(src=dp.join("shapefiles/tribal/conus_padus_state.shp"),
+              dst=dp.join("rasters/state_land_codes.tif"),
               attribute="code",
               transform=transform,
               height=height,
               width=width,
               epsg=4326,
               dtype=gdal.GDT_Float32,
-              overwrdite=True)
+              overwrite=True)
