@@ -11,6 +11,11 @@ Rasterize BLM zone and state land lookup codes.
 5) I think if we get the 30m raster, the hard part will be done and we can
    resample to whatever resolution later.
 
+
+To Do:
+    It looks like these cover every county in the BLM territory, so we'll have
+    clip out just the fed land portion first.
+    
 Created on Mon Feb  3 09:30:06 2020
 
 @author: twillia2
