@@ -13,7 +13,7 @@ Rasterize BLM zone and state land lookup codes.
 
 
 To Do:
-    It looks like these cover every county in the BLM territory, so we'll have
+    It looks like these cover all the land in the BLM territory, so we'll have
     clip out just the fed land portion first.
     
 Created on Mon Feb  3 09:30:06 2020
@@ -26,7 +26,6 @@ import os
 import pandas as pd
 import rasterio
 import requests
-import tabula
 from osgeo import gdal
 from weto.functions import Data_Path, rasterize
 
@@ -40,10 +39,6 @@ lookup.columns = ['code', 'type',' dollar_ac']
 zone_lu = lookup[lookup["type"].str.contains("BLM Zone")]
 zone_lu["zone"] = zone_lu["type"].apply(lambda x: int(x[-2:]))
 
-# Counties
-counties = gpd.read_file(dp.join("shapefiles/USA/tl_2017_us_county.shp"))
-states = gpd.read_file(dp.join("shapefiles/USA/tl_2017_us_state.shp"))
-state_names = states["NAME"].unique()
 
 # Tabula py!
 pdf_path = dp.join("tables/blm_rent_zones.pdf")
@@ -70,20 +65,35 @@ zone_df = zone_df[zone_df["state"] != "Alaska"]
 zone_df["county"] = zone_df["county"].apply(fixit)
 
 # We need a state county field
+counties = gpd.read_file(dp.join("shapefiles/USA/tl_2017_us_county.shp"))
+cols = list(counties.columns[:6] )+ ["geometry"]
+counties = counties[cols]
+counties.columns = ['STATEFP', 'COUNTYFP', 'COUNTYNS', 'GEOID', 'NAME',
+                    'NAMELSAD', 'geometry']
+states = gpd.read_file(dp.join("shapefiles/USA/tl_2017_us_state.shp"))
+states = states[["NAME", "STATEFP", "geometry"]]
+counties = counties[["NAME", "STATEFP", "geometry"]]
 zone_df["stateco"] = zone_df["county"] + ", " + zone_df["state"]
 counties = counties.merge(states[["NAME", "STATEFP"]], on="STATEFP")
 counties["stateco"] = counties["NAME_x"] + ", " + counties["NAME_y"]
+counties = counties.drop(["NAME_x", "NAME_y"], axis=1)
 
 # Now merge everything together
 zone_df = zone_df[zone_df["zone"] != ""]
 zone_df["zone"] = zone_df["zone"].astype(int)
 zone_df = zone_df.merge(zone_lu, on="zone", how="left")
 counties = counties.merge(zone_df, on="stateco", how="left")
+counties = counties[['STATEFP', 'geometry', 'stateco', 'state', 'county',
+                     'pfactor', 'value', 'zone', 'code', 'type',
+                     ' dollar_ac']]
 
-# Save back to file
-counties.to_file(dp.join("shapefiles/USA/tl_2017_us_county.shp"))
+# Now clip by fedlands - do this with ogr it takes too long
+fedland = gpd.read_file(dp.join("shapefiles/BLM/conus_fedland_blm_county.shp"))
+fedland = fedland[["NAMELSAD", "geometry"]]
+blm_counties = gpd.overlay(counties, fedland)
 
-
+# Save to new file
+blm_counties.to_file(dp.join("shapefiles/USA/blm_2017_us_county.shp"))
 
 # get the target geometry
 nlcd = rasterio.open(dp.join("rasters/nlcd_2016_ag.tif"))
@@ -92,13 +102,12 @@ height = nlcd.height
 width = nlcd.width
 
 # Rasterize the code field to the finest resolution we'll use
-if not os.path.exists(dp.join("rasters/blm_codes.tif")):
-    rasterize(src=dp.join("shapefiles/USA/tl_2017_us_county.shp"),
-              dst=dp.join("rasters/blm_codes.tif"),
-              attribute="code",
-              transform=transform,
-              height=height,
-              width=width,
-              epsg=4326,
-              dtype=gdal.GDT_Float32,
-              overwrite=True)
+rasterize(src=dp.join("shapefiles/USA/blm_2017_us_county.shp"),
+          dst=dp.join("rasters/blm_codes.tif"),
+          attribute="code",
+          transform=transform,
+          height=height,
+          width=width,
+          epsg=4326,
+          dtype=gdal.GDT_Float32,
+          overwrite=True)
