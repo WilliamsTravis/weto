@@ -1,68 +1,42 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Create a single field of lookup codes based on a ranking system.
+Taked the masked code grids, stack them, and create a single code grid.
 
-1) read all four layers in as arrays
-2) write a function that selects the highest ranked of those present at any
-    single cell.
-3) write to raster! That's the plan at least'
-
-blm_codes_ac.tif   blm_codes.tif             nlcd_codes_ac.tif   state_land_codes_ac.tif   tribal_codes_ac.tif
-
+There is obviously a better way.
 
 Created on Mon Feb  3 16:02:50 2020
 
 @author: twillia2
 """
-import numpy as np
-import rasterio
-from weto.functions import Data_Path, to_raster, read_raster
+import dask.array as da
+import xarray as xr
+from osgeo import gdal
+from weto.functions import Data_Path, to_raster
 
 # data path
 dp = Data_Path("/scratch/twillia2/weto/data")
 
-# best way to do this?
-#1) Apply function to each point (computationally intensive)
+# Get each array, remove band dimension
+blm = xr.open_rasterio(dp.join("rasters/albers/blm_codes_ac.tif"))[0]
+tribes = xr.open_rasterio(dp.join("rasters/albers/masks/masked_tribes.tif"))[0]
+state = xr.open_rasterio(dp.join("rasters/albers/masks/masked_state.tif"))[0]
+nlcd = xr.open_rasterio(dp.join("rasters/albers/masks/masked_nlcd.tif"))[0]
 
-#2) Apply cumulative masks (trickier, but less computation)
-# Get each array
-blm = rasterio.open(dp.join("rasters/albers/blm_codes_ac.tif")).read()
-tribes = rasterio.open(dp.join("rasters/albers/tribal_codes_ac.tif")).read()
-state = rasterio.open(dp.join("rasters/albers/state_land_codes_ac.tif")).read()
-nlcd, geom, proj = read_raster(dp.join("rasters/albers/nlcd_codes_ac.tif"))
+# Convert to dask arrays ?
+dnlcd = da.from_array(nlcd)
+dblm = da.from_array(blm)
+dtribes = da.from_array(tribes)
+dstate = da.from_array(state)
 
-# Create a mask out of each
-bmask = blm.copy()
-bmask[bmask == -9999] = np.nan
-bmask = bmask * 0 + 1
+# ...Create an ndarray out of the originals, and take the max again
+composite = da.stack([dblm, dtribes, dstate, dnlcd], axis=0).max(axis=0)
+final = composite.compute()  # memory explosion?
 
-tmask = tribes.copy()
-tmask[tmask == -9999] = np.nan
-tmask = tmask * 0 + 1
+# Save to file
+reference = gdal.Open(dp.join("rasters/albers/blm_codes_ac.tif"))
+proj = reference.GetProjection()
+geom = reference.GetGeoTransform()
+to_raster(final, dp.join("rasters/albers/cost_codes.tif"), proj, geom)
 
-smask = state.copy()
-smask[smask == -9999] = np.nan
-smask = smask * 0 + 1
-
-nmask = nlcd.copy()
-nmask[nmask == -9999] = np.nan
-nmask = nmask * 0 + 1
-
-# Then return nans to 0
-
-# say we had three masks
-# mask 1 = bmask + tmask + smask
-# mask 2 = bmask + tmask 
-# mask 3 = bmask
-
-# Then we can iterate like this
-# nlcd = nlcd * mask 1
-# state = state * mask 2
-# tribes = tribes * mask 3
-# blm = blm
-
-# And then fill in the gaps
-
-
-
+# Done?

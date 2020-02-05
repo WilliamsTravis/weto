@@ -31,6 +31,21 @@ ALBERS_PROJ4 = ("+proj=aea +lat_0=40 +lon_0=-96 +lat_1=20 +lat_2=60 +x_0=0 " +
 
 
 # FUNCTIONS
+def mask(array, navalues=-9999):
+    """Create a mask of 1's and nans out of a numpy array"""
+
+    # So that multiple values can be masked out
+    if not isinstance(navalues, (list, tuple, np.ndarray)):
+        navalues = [navalues]
+
+    # Create mask
+    mask = array.copy()
+    mask[np.isin(mask, navalues)] = np.nan
+    mask = mask * 0 + 1
+
+    return mask
+
+
 def rasterize(src, dst, attribute, epsg, transform, height, width,
               navalue=-9999, all_touch=False, dtype=gdal.GDT_Float32,
               overwrite=False):
