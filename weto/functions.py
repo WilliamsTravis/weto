@@ -22,6 +22,9 @@ from osgeo import gdal, ogr, osr
 from shapely.geometry import Point
 from tqdm import tqdm
 
+# Use GDAL exceptions
+gdal.UseExceptions()
+
 # VARIABLES
 ALBERS_PROJ4 = ("+proj=aea +lat_0=40 +lon_0=-96 +lat_1=20 +lat_2=60 +x_0=0 " +
                 "+y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs")
@@ -345,74 +348,147 @@ def reproject_point(src, dst, tproj):
     trgt_file = None
 
 
-def shp_to_h5(shp, hdf, attribute, mode="w"):
-    """Assign values from a shapefile of polygons to the WTK point dataset
-    return a geopandas geodataframe and write or append to an HDF5 file.
+
+def reproject_raster(src, dst, s_srs=None, t_srs=None, res=None, extent=None,
+                     template=None, overwrite=False):
+    """
+    Warp a raster to a new geometry
 
     Parameters
     ----------
-    shp : geopandas.geodataframe.GeoDataFrame | str
-        Either a GeoPandas GeoDataFrame or a path as a string to a shapefile
-    attribute : str
-        The attribute of the shapefile from which to assign values to the WTK
-        point data set.
+    src : str
+        Path to source raster file.
+    dst : str
+        Path to target raster file.
+    s_srs : str
+        Source coordinate reference system. Requires a proj4 string for now.
+    t_srs : str
+        Target coordinate reference_system. Requires a proj4 string for now.
+    res : int |float
+        Target spatial resolution.
+    extent : list-like
+        Spatial extent of output raster in this order: (xmin, ymin, xmax, ymax)
+    overwrite : boolean
 
     Returns
     -------
-    geopandas.geodataframe.GeoDataFrame
+    None.
 
-    Mode Notes
-    ----------
-        r         : 	Readonly, file must exist
-        r+        : 	Read/write, file must exist
-        w         : 	Create file, truncate if exists
-        w- or x   : 	Create file, fail if exists
-        a         : 	Read/write if exists, create otherwise (default)
-
-    I want this to either create a new HDF5 file of cost layer values at each
-    wind toolkit point, or append to an existing hdf dataset with wtk points.
-    Grant will have the best idea of what is needed to incorporate our changes
-    into reV.
-
-    I should do multiple attributes at once.
-
-    Also, this drops non-present values...
-
-    It's a start
+    sample arguments
+        src = "/projects/rev/data/conus/_windready_conus.tif"
+        dst = "/scratch/twillia2/weto/data/rasters/albers/exclusions.tif"
+        template = "/scratch/twillia2/weto/data/rasters/albers/cost_codes.tif"
     """
-
-    # Is this file in memory or on disk?
-    if isinstance(shp, str):
-        try:
-            shp = gpd.read_file(shp)
-        except DriverError:
-            print("Shapefile doesn't exist.")
-
-    # Extract just the requested attribute
-    shp = shp[["geometry", attribute]]
-    wtk2 = gpd.sjoin(WTK, shp)
-
-    # HDF5 doesn't like type 'O'
-    dtype = wtk2[attribute].dtype
-
-    if mode == "w":
-        with h5py.File(hdf, mode) as file:
-            if dtype is np.dtype('O'):
-                file.create_dataset(name=attribute, data=wtk2[attribute],
-                                    dtype=h5py.string_dtype(encoding='utf-8'))
+    # Overwrite existing file
+    if os.path.exists(dst):
+        if overwrite:
+            if os.path.isfile(dst):
+                os.remove(dst)
             else:
-                file.create_dataset(name=attribute, data=wtk2[attribute])
-            file.create_dataset(name="lat", data=wtk2["lat"])
-            file.create_dataset(name="lon", data=wtk2["lon"])
-    elif mode == "a":
-        with h5py.File(hdf, mode) as file:
-            if dtype is np.dtype('O'):
-                file.create_dataset(name=attribute, data=wtk2[attribute],
-                                    dtype=h5py.string_dtype(encoding='utf-8'))
-            else:
-                file.create_dataset(name=attribute, data=wtk2[attribute])
-    else:
-        print("Sorry, I haven't figured mode=" + mode + " out yet.")
+                shutil.rmtree(dst)
+        else:
+            print(dst + " exists, use overwrite=True to replace this file.")
+            return
+
+
+    # If a template is provided, use its geometry  for target figures
+    if template:
+        temp = rasterio.open(template)
+        extent = list(temp.bounds)
+        transform = temp.transform  # rasterio order is different that GDAL
+        t_srs = temp.crs
+        res = transform[0]
+
+    # Get source srs
+    source = rasterio.open(src)
+    s_srs = source.crs
+
+    # Check Options: https://gdal.org/python/osgeo.gdal-module.html#WarpOptions
+    try:
+        ops = gdal.WarpOptions(format="GTiff",
+                               outputBounds=extent,
+                               xRes=res,
+                               yRes=res,
+                               srcSRS=s_srs,
+                               dstSRS=t_srs,
+                               resampleAlg="near")
+    except Exception as error:  # GDAL exceptions?
+        print("Options not available: ")
+        print(error)
+
+    # Call
+    ds = gdal.Warp(dst, src, options=ops)
+    del ds
+
+
+# def shp_to_h5(shp, hdf, attribute, mode="w"):
+#     """Assign values from a shapefile of polygons to the WTK point dataset
+#     return a geopandas geodataframe and write or append to an HDF5 file.
+
+#     Parameters
+#     ----------
+#     shp : geopandas.geodataframe.GeoDataFrame | str
+#         Either a GeoPandas GeoDataFrame or a path as a string to a shapefile
+#     attribute : str
+#         The attribute of the shapefile from which to assign values to the WTK
+#         point data set.
+
+#     Returns
+#     -------
+#     geopandas.geodataframe.GeoDataFrame
+
+#     Mode Notes
+#     ----------
+#         r         : 	Readonly, file must exist
+#         r+        : 	Read/write, file must exist
+#         w         : 	Create file, truncate if exists
+#         w- or x   : 	Create file, fail if exists
+#         a         : 	Read/write if exists, create otherwise (default)
+
+#     I want this to either create a new HDF5 file of cost layer values at each
+#     wind toolkit point, or append to an existing hdf dataset with wtk points.
+#     Grant will have the best idea of what is needed to incorporate our changes
+#     into reV.
+
+#     I should do multiple attributes at once.
+
+#     Also, this drops non-present values...
+
+#     It's a start
+#     """
+
+#     # Is this file in memory or on disk?
+#     if isinstance(shp, str):
+#         try:
+#             shp = gpd.read_file(shp)
+#         except DriverError:
+#             print("Shapefile doesn't exist.")
+
+#     # Extract just the requested attribute
+#     shp = shp[["geometry", attribute]]
+#     wtk2 = gpd.sjoin(WTK, shp)
+
+#     # HDF5 doesn't like type 'O'
+#     dtype = wtk2[attribute].dtype
+
+#     if mode == "w":
+#         with h5py.File(hdf, mode) as file:
+#             if dtype is np.dtype('O'):
+#                 file.create_dataset(name=attribute, data=wtk2[attribute],
+#                                     dtype=h5py.string_dtype(encoding='utf-8'))
+#             else:
+#                 file.create_dataset(name=attribute, data=wtk2[attribute])
+#             file.create_dataset(name="lat", data=wtk2["lat"])
+#             file.create_dataset(name="lon", data=wtk2["lon"])
+#     elif mode == "a":
+#         with h5py.File(hdf, mode) as file:
+#             if dtype is np.dtype('O'):
+#                 file.create_dataset(name=attribute, data=wtk2[attribute],
+#                                     dtype=h5py.string_dtype(encoding='utf-8'))
+#             else:
+#                 file.create_dataset(name=attribute, data=wtk2[attribute])
+#     else:
+#         print("Sorry, I haven't figured mode=" + mode + " out yet.")
 
 
 # To split our big file into 100 smaller ones...
