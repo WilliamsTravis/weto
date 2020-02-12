@@ -17,7 +17,7 @@ import xarray as xr
 # Move to functions
 @da.as_gufunc(signature="(i)->(i)", output_dtypes=int, vectorize=True,
               allow_rechunk=True)
-def gmask(array, navalues=[-9999, 0]):
+def gmask(array, navalues=[-9999., 0.0]):
     """Create a mask of 1's and 0 out of an array using non values"""
     # So multiple values can be masked out
     if not isinstance(navalues, (list, tuple, np.ndarray)):

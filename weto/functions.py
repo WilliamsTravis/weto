@@ -7,6 +7,7 @@ Created on Wed Jan  8 09:05:39 2020
 
 @author: twillia2
 """
+import dask.array as da
 import os
 import shutil
 import geopandas as gpd
@@ -15,8 +16,8 @@ import numpy as np
 import rasterio
 import subprocess as sp
 import sys
+import xarray as xr
 from fiona.errors import DriverError
-# from geofeather import from_geofeather
 from multiprocessing import Pool
 from osgeo import gdal, ogr, osr
 from shapely.geometry import Point
@@ -31,6 +32,52 @@ ALBERS_PROJ4 = ("+proj=aea +lat_0=40 +lon_0=-96 +lat_1=20 +lat_2=60 +x_0=0 " +
 
 # Wind Toolkit Point Coordinates
 # WTK = from_geofeather("data/shapefiles/wtk_points.feather")
+
+@da.as_gufunc(signature="(i)->(i)", output_dtypes=int, vectorize=True,
+              allow_rechunk=True)
+def gmask(array, navalues=[-9999, 0]):
+    """Create a mask of 1's and 0 out of an array using non values"""
+    # So multiple values can be masked out
+    if not isinstance(navalues, (list, tuple, np.ndarray)):
+        navalues = [navalues]
+
+    # Create mask
+    array = array.copy()
+    array[np.isin(array, navalues)] = np.nan
+    array = array * 0 + 1
+    array[np.isnan(array)] = 0
+
+    return array
+
+
+def to_xr(array, template):
+    """Take a numpy or dask array and a georeferenced template xarray dataset
+    to create a new georeferenced xarray dataset.
+
+    Parameters
+    ----------
+    array : TYPE
+        DESCRIPTION.
+    template : TYPE
+        DESCRIPTION.
+
+    Returns
+    -------
+    dataset : TYPE
+        DESCRIPTION.
+    """
+
+    # Get coordinates dims and attributes from the template
+    dims = template.coords.dims
+    coords = [template.coords[dim].data for dim in dims]
+    attrs = template.attrs
+
+    # Create a new data array and dataset
+    darray= xr.DataArray(data=array, coords=coords, dims=dims)
+    dataset = xr.Dataset(data_vars={'value': darray}, attrs=attrs)
+
+    return dataset
+
 
 
 # FUNCTIONS
@@ -54,7 +101,7 @@ def rasterize(src, dst, attribute, epsg, transform, height, width,
               overwrite=False):
     """
     Use GDAL Rasterize to rasterize a shapefile stored on disk and write
-    outputs to a file.  
+    outputs to a file.
 
     Parameters
     ----------
@@ -350,7 +397,7 @@ def reproject_point(src, dst, tproj):
 
 
 def reproject_raster(src, dst, s_srs=None, t_srs=None, res=None, extent=None,
-                     template=None, overwrite=False):
+                     template=None, dtype="Float32", overwrite=False):
     """
     Warp a raster to a new geometry
 
@@ -403,6 +450,20 @@ def reproject_raster(src, dst, s_srs=None, t_srs=None, res=None, extent=None,
     source = rasterio.open(src)
     s_srs = source.crs
 
+    # The data type needs to be a gdal object, but that's an odd thing to know
+    dtypes ={
+             "byte": gdal.GDT_Byte,
+             "int16": gdal.GDT_Int16,
+             "int32": gdal.GDT_Int32,
+             "float32": gdal.GDT_Float32,
+             "float64": gdal.GDT_Float64,
+             "cint16": gdal.GDT_CInt16,
+             "cint32": gdal.GDT_CInt32,
+             "cfloat32": gdal.GDT_CFloat32,
+             "cfloat64": gdal.GDT_CFloat64,
+             }
+
+
     # Check Options: https://gdal.org/python/osgeo.gdal-module.html#WarpOptions
     try:
         ops = gdal.WarpOptions(format="GTiff",
@@ -411,7 +472,8 @@ def reproject_raster(src, dst, s_srs=None, t_srs=None, res=None, extent=None,
                                yRes=res,
                                srcSRS=s_srs,
                                dstSRS=t_srs,
-                               resampleAlg="near")
+                               resampleAlg="near",
+                               outputType=dtype)
     except Exception as error:  # GDAL exceptions?
         print("Options not available: ")
         print(error)
@@ -509,14 +571,14 @@ def split_extent(raster_file, n=100):
     # Split coordinates into 10 pieces along both axes...
     xchunks = np.array(np.array_split(xs, nc))
     ychunks = np.array(np.array_split(ys, nc))
-    
+
     # Get min/max of each coordinate chunk...
     sides = lambda x: [min(x), max(x)]
     xmap = map(sides, xchunks)
     ymap = map(sides, ychunks)
     xext = np.array([v for v in xmap])
     yext = np.array([v for v in ymap])
-    
+
     # Combine these in this order [min, ymin, max, ymax]....
     extents = []
     for xex in xext:
@@ -656,7 +718,7 @@ def tile_raster(raster_file, outfolder_path, ntiles, ncpu):
     out_folders = np.repeat(out_folder, len(extents))
     args = list(zip(extents, raster_files, chunknumbers, out_folders))
 
-    # Run each 
+    # Run each
     with Pool(ncpu) as pool:
         tfiles = []
         for tfile in tqdm(pool.imap(tileit, args), total=len(extents),
@@ -691,13 +753,13 @@ def vectorit(arg):
             to_raster(newarray, outfile, crs, geom, navalue=-9999)
         except Exception as e:
             print("\n")
-            print(infile + ": ") 
+            print(infile + ": ")
             print(e)
             print("\n")
 
 
 def map_tiles(tilefiles, mapvals, outfolder, ncpu):
-    """Take a list of tiled raster files, map value from a dictionary to 
+    """Take a list of tiled raster files, map value from a dictionary to
     a list of output raster files"""
 
     # Create the output paths

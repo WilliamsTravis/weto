@@ -14,52 +14,6 @@ from osgeo import gdal
 from weto.functions import Data_Path, to_raster
 import xarray as xr
 
-# Move to functions
-@da.as_gufunc(signature="(i)->(i)", output_dtypes=int, vectorize=True,
-              allow_rechunk=True)
-def gmask(array, navalues=[-9999, 0]):
-    """Create a mask of 1's and 0 out of an array using non values"""
-    # So multiple values can be masked out
-    if not isinstance(navalues, (list, tuple, np.ndarray)):
-        navalues = [navalues]
-
-    # Create mask
-    array = array.copy()
-    array[np.isin(array, navalues)] = np.nan
-    array = array * 0 + 1
-    array[np.isnan(array)] = 0
-
-    return array
-
-
-def to_xr(array, template):
-    """Take a numpy or dask array and a georeferenced template xarray dataset
-    to create a new georeferenced xarray dataset.
-
-    Parameters
-    ----------
-    array : TYPE
-        DESCRIPTION.
-    template : TYPE
-        DESCRIPTION.
-
-    Returns
-    -------
-    dataset : TYPE
-        DESCRIPTION.
-    """
-
-    # Get coordinates dims and attributes from the template
-    dims = template.coords.dims
-    coords = [template.coords[dim].data for dim in dims]
-    attrs = template.attrs
-
-    # Create a new data array and dataset
-    darray= xr.DataArray(data=array, coords=coords, dims=dims)
-    dataset = xr.Dataset(data_vars={'value': darray}, attrs=attrs)
-
-    return dataset
-
 
 # data path
 dp = Data_Path("/scratch/twillia2/weto/data")
