@@ -11,10 +11,7 @@ dependencies:
   - gdal
   - h5py
   - matplotlib
+  - rioxarray
   - scipy
   - spyder
   - tqdm
-  - pip
-  - pip:
-    - "--editable=git+https://github.nrel.gov/GDS/pygds.git"
-    - geofeather

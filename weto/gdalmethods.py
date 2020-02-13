@@ -13,7 +13,7 @@ Things to do:
       non-extant options.
     - add in creation options, as these are separate
 """
-
+import dask.array as da
 import geopandas as gpd
 import numpy as np
 import os
@@ -25,6 +25,7 @@ from multiprocessing import Pool
 from osgeo import gdal, ogr, osr
 from shapely.geometry import Point
 from tqdm import tqdm
+import weto.dask_raster as dr
 
 
 # CONSTANTS
@@ -574,7 +575,8 @@ def to_geo(data_frame, loncol="lon", latcol="lat", epsg=4326):
 
 
 def to_raster(array, savepath, crs=None, geometry=None, template=None,
-              dtype=gdal.GDT_Float32, compress=None, navalue=-9999):
+              dtype=gdal.GDT_Float32, tiled=False, compress=None,
+              nadata=-9999):
     """Takes in a numpy array and writes data to a GeoTiff.
 
     Parameters
@@ -603,33 +605,18 @@ def to_raster(array, savepath, crs=None, geometry=None, template=None,
     navalue : int | float
         The number used for non-values in the raster data set. Defaults to
         -9999.
+
+
+    # To Do:
+        - Write multi band rasters
+        - Write dask arrays directly to disk
+        - Use different drivers
+        - 
     """
 
     # Retrieve needed raster elements
     xpixels = array.shape[1]
     ypixels = array.shape[0]
-
-    # This helps sometimes
-    savepath = savepath.encode('utf-8')
-
-    # Specifying data types shouldn't be so difficult
-    if isinstance(dtype, str):
-        dtype = dtype.lower().replace("gdt_", "")
-        try:
-            dtype = GDAL_TYPEMAP[dtype]
-        except KeyError:
-            print("\n'" + dtype + "' is not an available data type. "
-                  "Choose a value from this list:")
-            print(str(list(GDAL_TYPEMAP.keys())))
-
-    # Get options here - not built out yet
-    if compress:
-        cops = ["compress=" + compress]
-
-    # Create file
-    driver = gdal.GetDriverByName("GTiff")
-    image = driver.Create(savepath, xpixels, ypixels, 1, dtype,
-                          options=cops)
 
     # Use a template file to extract affine transformation, crs, and na value
     if template:
@@ -637,13 +624,50 @@ def to_raster(array, savepath, crs=None, geometry=None, template=None,
         geometry = template_file.GetGeoTransform()
         crs = template_file.GetProjection()
         band1 = template_file.GetRasterBand(1)
-        navalue = band1.GetNoDataValue()
+        nadata = band1.GetNoDataValue()
 
-    # Write raster data and attributes to file
-    image.SetGeoTransform(geometry)
-    image.SetProjection(crs)
-    image.GetRasterBand(1).WriteArray(array)
-    image.GetRasterBand(1).SetNoDataValue(navalue)
+    # Get options here - not built out yet
+    if compress:
+        cops = ["compress=" + compress]
+
+    # if this is a dask array...
+    if isinstance(array, da.core.Array):
+        print("DASK ARRAY!")
+        template_file = rasterio.open(template)
+        transform = template_file.transform
+        with dr.RasterioDataset(savepath, 'w',
+                                driver='GTiff',
+                                width=xpixels,
+                                height=ypixels,
+                                count=1,
+                                crs=crs,
+                                transform=transform,
+                                dtype=dtype,
+                                tiled=tiled,
+                                nadata=nadata,
+                                compress=compress) as file:
+            da.store(array, file, lock=True)
+    else:
+        # Specifying data types shouldn't be so difficult
+        if isinstance(dtype, str):
+            dtype = dtype.lower().replace("gdt_", "")
+            try:
+                dtype = GDAL_TYPEMAP[dtype]
+            except KeyError:
+                print("\n'" + dtype + "' is not an available data type. "
+                      "Choose a value from this list:")
+                print(str(list(GDAL_TYPEMAP.keys())))
+
+        # Create file
+        driver = gdal.GetDriverByName("GTiff")
+        image = driver.Create(savepath, xpixels, ypixels, 1, dtype,
+                              options=cops)
+    
+        # Write raster data and attributes to file
+        image.SetGeoTransform(geometry)
+        image.SetProjection(crs)
+        image.GetRasterBand(1).WriteArray(array)
+        image.GetRasterBand(1).SetNoDataValue(nadata)
 
 
 def warp(src, dst, s_srs=None, t_srs=None, res=None, extent=None,

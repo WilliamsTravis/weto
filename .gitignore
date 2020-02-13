@@ -1,2 +1,2 @@
-/data/*
-/projects/dask-worker-space/*
+data/
+projects/dask-worker-space/*
