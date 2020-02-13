@@ -10,8 +10,11 @@ Things to do:
       could detect the file type, try to open it with the appropriate function,
       and raise an exception and delete it if it fails.
     - use **kwargs to include all available options. The check will still flag
-      non-extant options.
-    - add in creation options, as these are separate
+      non-extant options. This will also make the rest of the gdal functions
+      easier to implement.
+    - add in creation options, as these are separate from function options.
+      This is trickier though, because there can be several. Make this a list
+      in an explicit "co" argument?
 """
 import dask.array as da
 import geopandas as gpd
@@ -79,6 +82,25 @@ def gdal_progress(complete, message, unknown):
         print(".", end="")
 
     return 1
+
+
+def check_raster(file):
+    """Check that an output raster opens, delete if it fails
+
+    Parameters
+    ----------
+    file : str
+        Path to raster file.
+
+    Returns
+    -------
+    None.
+    """
+
+    try:
+        file = gdal.Open(file)
+    except:  # <--------------------------------------------------------------- Catch exceptions as they come up.
+        print(file + " failed to open.")
 
 
 def rasterize(src, dst, attribute, epsg, transform, height, width,
@@ -611,7 +633,7 @@ def to_raster(array, savepath, crs=None, geometry=None, template=None,
         - Write multi band rasters
         - Write dask arrays directly to disk
         - Use different drivers
-        - 
+        -
     """
 
     # Retrieve needed raster elements
@@ -631,7 +653,7 @@ def to_raster(array, savepath, crs=None, geometry=None, template=None,
         cops = ["compress=" + compress]
 
     # if this is a dask array...
-    if isinstance(array, da.core.Array):
+    if isinstance(array, da.core.Array):  # <---------------------------------- Just use gdal here to be consistent.
         print("DASK ARRAY!")
         template_file = rasterio.open(template)
         transform = template_file.transform
@@ -662,7 +684,7 @@ def to_raster(array, savepath, crs=None, geometry=None, template=None,
         driver = gdal.GetDriverByName("GTiff")
         image = driver.Create(savepath, xpixels, ypixels, 1, dtype,
                               options=cops)
-    
+
         # Write raster data and attributes to file
         image.SetGeoTransform(geometry)
         image.SetProjection(crs)
