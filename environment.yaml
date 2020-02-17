@@ -1,6 +1,7 @@
 name: weto
 channels:
   - conda-forge
+  - anaconda
 dependencies:
   - python=3.7
   - dask
@@ -8,10 +9,11 @@ dependencies:
   - descartes
   - distributed
   - geopandas
-  - gdal
+  - gdal=2.4.4
   - h5py
   - matplotlib
-  - rioxarray
+  - netcdf4
+  - rasterio
   - scipy
   - spyder
   - tqdm

@@ -3,10 +3,9 @@
 """
 Create a coverage layer with exclusions.
 
-1) full and partial exclusions...don't count partial exclusions.
+1) full and partial exclusions...don't count partial exclusions?
 2) NA's for non-CONUS pixels
-3) 1 for codes and for full exclusions
-4) 0 for no codes and for partial exclusions
+3) 1 for codes and for full exclusions4) 0 for no codes and for partial exclusions
 
 Created on Sun Feb  9 22:33:54 2020
 
@@ -86,13 +85,12 @@ if not os.path.exists(coverage_path):
 
     # Now create the overall coverage layer with incl and codes
     conus[conus == -9999.] = np.nan
-    coverage = codes + incl
-    coverage[coverage > 0] = 1
+    coverage = da.stack([codes,  incl], axis=0).max(axis=0)
     coverage = coverage * conus
     with Client():
-        t = coverage.compute()
+        coverage = coverage.compute()
 
-    to_raster(t, coverage_path, template=codes_path, tiled=False,
+    to_raster(coverage, coverage_path, template=codes_path, tiled=False,
               compress="deflate")
 
 
@@ -100,22 +98,74 @@ if not os.path.exists(dp.join("tables/conus_cbe_lookup.csv")):
     # Fix it...
     print("no lookup table")
 
-# The coverage will 1s for areas that are covered by codes or full exclusions,
-# 0s for CONUS areas with no coverage, and nans for areas outside of CONUS.
+# Now we'll need each of these
+
 coverage = xr.open_rasterio(coverage_path, chunks=chunks)[0].data
 conus = xr.open_rasterio(conus_path, chunks=chunks)[0].data
+incl = xr.open_rasterio(incl_path, chunks=chunks)[0].data
 lookup = pd.read_csv(dp.join("tables/conus_cbe_lookup.csv"))
 
+# Codes
+blm = lookup[lookup["type"].str.contains("BLM Zone")]
+state = lookup[lookup["type"].str.contains("State Land")]
+private = lookup[(~lookup["type"].str.contains("BLM Zone")) &
+                 (~lookup["type"].str.contains("Tribal Land")) &
+                 (~lookup["type"].str.contains("State Land"))]
+blm_codes = blm["code"].values
+state_codes = state["code"].values
+private_codes = private["code"].values
 
+# What is the plan here...how much of each category is represented, or how
+# how much of what is represented is in each category? Also, we need to be
+# careful not to include exclusions when counting each of the categories.
+# In fact, if I was to go back and rank exclusions as the top priority
+# in the first steps this would be taken care of and we could skip most of the
+# mess above!
+
+# Call these one at a time to avoid overly complicated dask graphs
 with Client():
     # Total number of cells within conus
-    total = conus[conus > -9999.].sum()
-    ntotal = total.compute()
+    conus[conus == -9999.] = 0
+    ntotal = da.count_nonzero(conus).compute()
 
-    # Number of sites covered by codes or full exclusions
-    coverage[coverage > 0] = 1
-    covered = coverage[coverage == 1].sum()
-    ncovered = covered.compute()
+# Number of sites covered by codes or full exclusions
+with Client():
+    coverage[da.isnan(coverage)] = 0
+    ncovered = da.count_nonzero(coverage).compute()
 
-# total coverage
-pcoverage = ncovered / ntotal  # 81% not bad...this includes the great lakes...perhaps we should try where nlcd != 1 (water bodies)
+# BLM Coverage - we'll need the original rasters of each of these layers
+with Client():
+    # blm_total = ...`
+    blm_covered = coverage[da.isin(coverage, blm_codes)]
+    nblm = da.count_nonzero(blm_covered).compute()
+
+# State Percentage
+with Client():
+    # state_total = ...
+    state_covered = coverage[da.isin(coverage, state_codes)]
+    nstate = da.count_nonzero(state_covered).compute()
+
+# Private Percentage
+with Client():
+    # private_total = ...
+    private_covered = coverage[da.isin(coverage, private_codes)]
+    nprivate = da.count_nonzero(private_covered).compute()
+
+with Client():
+    # tribal total = ...
+    tribal_covered = coverage[coverage == 16]
+    ntribal = da.count_nonzero(tribal_covered).compute()
+
+with Client():
+    # exclusions
+    # incl_covered = coverage[coverage == 1]
+    incl_covered = incl[incl == 1]
+    nincl = da.count_nonzero(incl_covered).compute()
+
+# Total coverage
+pcoverage = ncovered / ntotal
+pblm = nblm / ntotal
+pstate = nstate / ntotal
+pprivate = nprivate / ntotal
+ptribal = ntribal / ntotal
+pexcl = nincl / ntotal

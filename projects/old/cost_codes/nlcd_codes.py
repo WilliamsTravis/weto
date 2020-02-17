@@ -165,5 +165,3 @@ if not os.path.exists(outfile):
             stderr=sp.PIPE)
 
 # Done
-
-

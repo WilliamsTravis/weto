@@ -103,9 +103,10 @@ def check_raster(file):
         print(file + " failed to open.")
 
 
-def rasterize(src, dst, attribute, epsg, transform, height, width,
-              navalue=-9999, all_touch=False, dtype=gdal.GDT_Float32,
-              template=None, overwrite=False):
+def rasterize(src, dst, attribute, transform=None, height=None,
+              width=None, nodata=-9999., all_touch=False,
+              dtype=gdal.GDT_Float32, template=None, overwrite=False,
+              compress=None):
     """
     Use GDAL RasterizeLayer to rasterize a shapefile stored on disk and write
     outputs to a file.
@@ -118,8 +119,6 @@ def rasterize(src, dst, attribute, epsg, transform, height, width,
         Destination path for the output raster.
     attribute : str
         Attribute name being rasterized.
-    epsg : int
-        EPSG Code associated with target coordinate reference system.
     transform : list | tuple | array
         Geometric affine transformation:
             (x-min, x-resolution, x-rotation, y-max, y-rotation, y-resoltution)
@@ -144,10 +143,30 @@ def rasterize(src, dst, attribute, epsg, transform, height, width,
 
     # Things to do:
         1) Catch exceptions
-        2) Progress callback
-        3) Use a template as option.
-        4) Use more than just EPSG (doesn't always work, also accept proj4)
+        2) fix progress
+        3) fix compression
     """
+    # Every function is a bit different
+    def gdal_progress(percent, message, unknown):
+        """A progress callback that recreates the gdal printouts."""
+
+        # We don't need the message or unknown objects
+        del message, unknown
+
+        # Between numeric printouts we need three dots
+        dots = [[str(i) + d for d in ["2", "5", "8"]] for i in range(10)]
+        dots = [int(l) for sl in dots for l in sl]
+
+        # If divisible by ten, print the number
+        if percent % 10 == 0 and percent != 0:
+            print("{}".format(percent), end="")
+
+        # If one of three numbers between multiples of 10, print a dot
+        elif percent in dots:
+            print(".", end="")
+
+        return 1
+
     # Overwrite existing file
     if os.path.exists(dst):
         if overwrite:
@@ -163,8 +182,15 @@ def rasterize(src, dst, attribute, epsg, transform, height, width,
     src_data = ogr.Open(src)
     layer = src_data.GetLayer()
 
-    # if template:
-        # Include as much as possible from the template
+    # Create CRS reference
+    crsrefs = layer.GetSpatialRef()
+
+    # If a template is provided, use it for geometry and dtypes
+    if template:
+        temp = gdal.Open(template)
+        transform = temp.GetGeoTransform()
+        height = temp.RasterYSize
+        width = temp.RasterXSize
 
     # Use transform to derive coordinates and dimensions
     xmin, xres, xrot, ymax, yrot, yres = transform
@@ -178,6 +204,7 @@ def rasterize(src, dst, attribute, epsg, transform, height, width,
         dtype = dtype.lower().replace("gdt_", "")
         try:
             dtype = GDAL_TYPEMAP[dtype]
+            # dtype = dtype
         except KeyError:
             print("\n'" + dtype + "' is not an available data type. "
                   "Choose a value from this list:")
@@ -187,15 +214,11 @@ def rasterize(src, dst, attribute, epsg, transform, height, width,
     driver = gdal.GetDriverByName("GTiff")
     trgt = driver.Create(dst, nx, ny, 1, dtype)
     trgt.SetGeoTransform((xmin, xres, xrot, ymax, yrot, yres))
-
-    # Add crs
-    refs = osr.SpatialReference()
-    refs.ImportFromEPSG(epsg)
-    trgt.SetProjection(refs.ExportToWkt())
+    trgt.SetProjection(crsrefs)
 
     # Set no value
     band = trgt.GetRasterBand(1)
-    band.SetNoDataValue(navalue)
+    band.SetNoDataValue(nodata)
 
     # Set options
     if all_touch is True:
@@ -203,43 +226,47 @@ def rasterize(src, dst, attribute, epsg, transform, height, width,
     else:
         ops = ["ATTRIBUTE=" + attribute]
 
-    # Alternately
-    # try:
-          # ops = gdal.RasterizeOptions(options=None,
-          #                             format=None,
-          #                             outputType=0,
-          #                             creationOptions=None,
-          #                             noData=None,
-          #                             initValues=None,
-          #                             outputBounds=None,
-          #                             outputSRS=None,
-          #                             transformerOptions=None,
-          #                             width=None,
-          #                             height=None,
-          #                             xRes=None,
-          #                             yRes=None,
-          #                             targetAlignedPixels=False,
-          #                             bands=None,
-          #                             inverse=False,
-          #                             allTouched=False,
-          #                             burnValues=None,
-          #                             attribute=None,
-          #                             useZ=False,
-          #                             layers=None,
-          #                             SQLStatement=None,
-          #                             SQLDialect=None,
-          #                             where=None,
-          #                             optim=None,
-          #                             callback=None,
-          #                             callback_data=None)
-    # except Exception as error:  # GDAL exceptions?
-    #     print("Options not available: ")
-    #     print(error)
+    if compress:
+        ops = ops + ["COMPRESS=DEFLATE"]
 
-
+    # We could just do this for all the options
+    try:
+            gdal.RasterizeOptions(
+                    # options=None,
+                    # format=None,
+                    outputType=dtype,
+                    # creationOptions=co,
+                    noData=nodata,
+                    # initValues=None,
+                    # outputBounds=extent,
+                    # outputSRS=crs,
+                    # transformerOptions=None,
+                    width=width,
+                    height=height,
+                    # xRes=res,
+                    # yRes=res,
+                    # targetAlignedPixels=False,
+                    # bands=None,
+                    # inverse=False,
+                    allTouched=all_touch,
+                    # burnValues=None,
+                    attribute=attribute,
+                    # useZ=False,
+                    # layers=None,
+                    # SQLStatement=None,
+                    # SQLDialect=None,
+                    # where=None,
+                    # optim=None,
+                    # callback=gdal_progress
+                    # callback_data=None
+                    )
+    except Exception as error:  # GDAL exceptions?
+        print("Options not available: ")
+        print(error)
 
     # Finally rasterize
-    gdal.RasterizeLayer(trgt, [1], layer, options=ops)
+    print("Processing " + dst + " :")
+    gdal.RasterizeLayer(trgt, [1], layer, options=ops, callback=gdal_progress)
 
     # Close target an source rasters
     del trgt
@@ -286,7 +313,7 @@ def read_raster(rasterpath, band=1, navalue=-9999):
     return(array, geometry, arrayref)
 
 
-def reproject_polygon(src, dst, tproj):
+def reproject_polygon(src, dst, t_srs):
     """Reproject a shapefile of polygons and write results to disk. Recreates
     this GDAL command:
         ogr2ogr -s_srs <source_projection> -t_srs <target_projection> dst src
@@ -297,7 +324,7 @@ def reproject_polygon(src, dst, tproj):
         Path to source shapefile.
     dst : str
         Path to target file.
-    tproj (int | str):
+    t_srs (int | str):
         Target coordinate projection system as an epsg code or proj4 string.
         Sometimes EPSG codes aren't available to GDAL installations, but
         they're easier to use when they are so this will try both.
@@ -307,6 +334,8 @@ def reproject_polygon(src, dst, tproj):
     This only handles ESRI Shapefiles at the moment, but can be written to
     handle any available driver.
     """
+    folder = os.path.dirname(dst)
+    os.makedirs(folder, exist_ok=True)
 
     # Create Shapefile driver
     driver = ogr.GetDriverByName("ESRI Shapefile")
@@ -320,9 +349,9 @@ def reproject_polygon(src, dst, tproj):
     # Target reference information
     trgt_srs = osr.SpatialReference()
     try:
-        trgt_srs.ImportFromEPSG(tproj)
+        trgt_srs.ImportFromEPSG(t_srs)
     except Exception:
-        trgt_srs.ImportFromProj4(tproj)
+        trgt_srs.ImportFromProj4(t_srs)
 
     # The transformation equation
     transform = osr.CoordinateTransformation(src_srs, trgt_srs)
@@ -791,6 +820,7 @@ def warp(src, dst, s_srs=None, t_srs=None, res=None, extent=None,
     except Exception as error:  # GDAL exceptions?
         print("Options not available: ")
         print(error)
+        raise
 
     # Call
     print("Processing " + dst + " :")
