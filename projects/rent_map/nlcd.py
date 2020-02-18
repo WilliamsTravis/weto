@@ -41,19 +41,21 @@ import pandas as pd
 import rasterio
 import subprocess as sp
 import xarray as xr
+from gdalmethods import warp, rasterize, Data_Path, reproject_polygon
+from gdalmethods import Map_Values, tile_raster
 from osgeo import ogr, osr
 
-from weto.gdalmethods import warp, rasterize, Data_Path, reproject_polygon
-
 # paths
-dp = Data_Path("~/Box/WETO 1.2/data")
-template_path = dp.join("rasters/albers/acre/cost_codes_ac.tif")
+# dp = Data_Path("~/Box/WETO 1.2/data")
+dp = Data_Path("/scratch/twillia2/weto/data")
+template_path = dp.join("rasters/albers/acre/inverse_exclusions.tif")
 nlcd_img_path = dp.join("rasters/NLCD/NLCD_2016_Land_Cover_L48_20190424.img")
 nlcd_tif_path = dp.join("rasters/NLCD/NLCD_2016_Land_Cover_L48_20190424.tif")
 nlcd_acre_path = dp.join("rasters/albers/acre/nlcd.tif")
 nlcd_acre_ag_path = dp.join("rasters/albers/acre/nlcd_ag.tif")
 county_path = dp.join("shapefiles/USA/tl_2017_us_county.shp")
-county_nad_path = dp.join("rasters/county_gids.tif")
+county_acre_path = dp.join("rasters/albers/acre/county_gids.tif")
+county_wgs_path = dp.join("shapefiles/USA/wgs/tl_2017_us_county.shp")
 county_albers_path = dp.join("shapefiles/USA/albers/tl_2017_us_county.shp")
 ag_product_path = dp.join("rasters/albers/acre/agcounty_product.tif")
 
@@ -69,71 +71,55 @@ sp.call(["gdal_translate",
          "-co", "compress=deflate"])
 
 # Warp to acre resolution in the exclusions srs
-original = xr.open_rasterio(nlcd_tif_path)
-res = template.res[0]
-extent = list(template.bounds)
-s_srs = original.crs
-t_srs = template.crs
 warp(nlcd_tif_path,
      nlcd_acre_path,
-     s_srs=s_srs,
-     t_srs=t_srs,
-     res=res,
-     extent=extent,
+     template=template_path,
      dtype= "byte",
      compress="deflate",
      overwrite=True)
 
 # Add in calc for 52, 81, and 82
 sp.call(["gdal_calc.py",
-          "-A", nlcd_acre_path,
-          "--outfile=" + nlcd_acre_ag_path,
-          "--calc=(52*(A==52))+(81*(A==81))+(82*(A==82))",
-          "--co", "compress=DEFLATE",
-          "--type=Float32"])
+         "-A", nlcd_acre_path,
+         "--outfile=" + nlcd_acre_ag_path,
+         "--calc=(52*(A==52))+(81*(A==81))+(82*(A==82))",
+         "--co", "compress=DEFLATE",
+         "--NoDataValue=-9999.",
+         "--type=Float32",
+         "--overwrite"])
 
-# We are struggling with the transformation, make a wgs84 template
-refs = osr.SpatialReference()
-refs.ImportFromEPSG(102008)
+# Now reproject and rasterize the county polygons - to wgs first, then albers
 shp = ogr.Open(county_path)
 layer = shp.GetLayer()
 s_srs = layer.GetSpatialRef()
 s_srs = s_srs.ExportToProj4()
-reproject_polygon(src=county_path, dst=county_albers_path, t_srs=t_srs)
+t_srs1 = "+proj=longlat +datum=WGS84 +no_defs"
+t_srs2 = template.crs.to_proj4()
+reproject_polygon(src=county_path, dst=county_wgs_path, t_srs=t_srs1)
+reproject_polygon(src=county_wgs_path, dst=county_albers_path, t_srs=t_srs2)
 
 # The geoid is a combo of state and county fips - progress?
-rasterize(src=county_path,
-          dst=county_nad_path,
+rasterize(src=county_albers_path,
+          dst=county_acre_path,
           attribute="GEOID",
-          template=nad_template_path,
+          template_path=template_path,
+          navalue=-9999.,
           dtype="Float32",
-          overwrite=True,
-          compress="DEFLATE")
+          overwrite=True)
 
-# Warp county gid to wgs84 then to albers
-warp(county_nad_path, county_nad_path, crs=4326, compress="deflate",
-     overwrite=True)
-
-# Multiply together - progress? how to catch stdout live?
+# Multiply together
 sp.call(["gdal_calc.py",
-         "-A", county_albers_path,
+         "-A", county_acre_path,
          "-B", nlcd_acre_ag_path,
          "--outfile=" + ag_product_path,
          "--NoDataValue=-9999.",
-         '--calc="(A*B)"'],
-        stdout=sp.PIPE,
-        stderr=sp.PIPE)
-
-
-
-
-
-
-
+         '--calc=(A*B)'])
 
 # We'll need both county and state names
-cdf = gpd.read_file(dp.join("shapefiles/USA/tl_2017_us_county.shp"))
-states = gpd.read_file(dp.join("shapefiles/USA/tl_2017_us_state.shp"))
+cdf = gpd.read_file("https://www2.census.gov/geo/tiger/TIGER2017/" +
+                    "COUNTY/tl_2017_us_county.zip")
+states = gpd.read_file("https://www2.census.gov/geo/tiger/TIGER2017//STATE/" +
+                       "tl_2017_us_state.zip")
 
 # if the product of these two sets of values results in all unique values...
 uags = np.array([52, 81, 82])
@@ -152,19 +138,6 @@ try:
     print("GEOID-NLCD products are all unique")
 except AssertionError:
     print("GEOID-NLCD products are not all unique")
-
-# Are county fips products unique?
-product = []
-for uag in uags:
-    vals = uag * ufips
-    vals = list(vals)
-    product += vals
-
-try:
-    assert np.unique(np.array(product)).shape[0] == len(product)  # no
-    print("County-NLCD products are all unique")
-except AssertionError:
-    print("County FIPS-NLCD products are not all unique")
 
 # These are the values we need to associate with
 lookup = pd.read_csv(dp.join("tables/conus_cbe_lookup.csv"))
@@ -197,31 +170,24 @@ reference["rast_val"] = (reference["GEOID"].astype(int) *
 # Now join the lookup to the reference using the type field
 reference = pd.merge(reference, lookup, on="type")
 reference.to_csv(dp.join("tables/nlcd_rast_lookup.csv"), index=False)
-mapvals = dict(zip(reference["rast_val"], reference["index"]))
+mapvals = dict(zip(reference["rast_val"], reference["code"]))
 
-# I think I need to split this up, no luck yet with fancier methods
-tilefiles = tile_raster(dp.join("rasters/agcounty_product.tif"),
-                        dp.join("rasters/agcounty_product_tiles"),
-                        ntiles=100, ncpu=10)
+# Split these into tiles
+prod_files = tile_raster(dp.join("rasters/albers/acre/agcounty_product.tif"),
+                    out_folder=dp.join("rasters/albers/acre/product_tiles"),
+                    ntiles=100, ncpu=15)
 
 # Now, map the index values to the product values, write to new tiles
-outfolder = dp.join("rasters/nlcd_codes_tiles")
-mt = Map_Tiles()
+mt = Map_Values(mapvals)
+outfolder = dp.join("rasters/albers/acre/nlcd_codes_tiles")
+infolder = dp.join("rasters/albers/acre/product_tiles")
 
-
-
-
-
-tilefiles = map_tiles(tilefiles, mapvals, outfolder, ncpu=5)
+# I think I need to split this up, no luck yet with fancier methods
+files = mt.map_files(src_files=prod_files, out_folder=outfolder, ncpu=15)
 
 # Use gdal_merge to merge them back into a single raster
-outfile = dp.join("rasters/nlcd_codes.tif")
-if not os.path.exists(outfile):
-    call =  ["gdal_merge.py", "-o", outfile] + tilefiles
-    sp.call(call,
-            stdout=sp.PIPE,
-            stderr=sp.PIPE)
+outfile = dp.join("rasters/albers/acre/nlcd_codes.tif")
+call =  ["gdal_merge.py", "-o", outfile] + files
+sp.call(call)
 
-# Done
-
-
+# Done.

@@ -12,10 +12,11 @@ import dask.array as da
 import xarray as xr
 
 from dask.distributed import Client
-from weto.gdalmethods import Data_Path, to_raster, warp
+from gdalmethods import Data_Path, to_raster, warp
 
 # Data Paths
-dp = Data_Path("~/Box/WETO 1.2/data")
+# dp = Data_Path("~/Box/WETO 1.2/data")
+dp = Data_Path("/scratch/twillia2/weto/data")
 exl_path = dp.join("rasters/core_exclusions_raster/alopez_core_exclusions.tif")
 
 # Best chunk size?
@@ -41,4 +42,5 @@ to_raster(excl, dp.join("rasters/inverse_exclusions.tif"), template=exl_path,
 res = 63.614907234075254
 warp(dp.join("rasters/inverse_exclusions.tif"),
      dp.join("rasters/albers/acre/inverse_exclusions.tif"),
-     res=res)
+     xRes=res,
+     yRes=res)
