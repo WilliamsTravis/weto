@@ -30,6 +30,10 @@ excl = xexcl.data
 excl[da.isnan(excl)] = 0
 excl = (excl - 1) * -1
 
+# And let's make exclusion values 9999
+excl[excl == 1] = 9999
+
+# Compute
 with Client():
     excl = excl.compute()
 
@@ -37,10 +41,10 @@ with Client():
 to_raster(excl, dp.join("rasters/inverse_exclusions.tif"), template=exl_path,
           compress="deflate")
 
-# warp to acre grid in north american albers equal area conic (epsg102008)
-# Struggling with the current one
+# warp to acre grid in north american albers equal area conic
 res = 63.614907234075254
 warp(dp.join("rasters/inverse_exclusions.tif"),
      dp.join("rasters/albers/acre/inverse_exclusions.tif"),
      xRes=res,
-     yRes=res)
+     yRes=res,
+     overwrite=True)

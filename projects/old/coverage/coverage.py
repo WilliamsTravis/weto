@@ -17,14 +17,12 @@ import os
 import pandas as pd
 import subprocess as sp
 import xarray as xr
-from weto.gdalmethods import Data_Path, warp, to_raster
-# from pygds.gdalmethods import Data_Path, warp, to_raster
-from osgeo import gdal
+from gdalmethods import Data_Path, warp, to_raster
 from dask.distributed import Client
+from osgeo import gdal
 
 # Data path
-dp = Data_Path("/Users/twillia2/Box/WETO 1.2/data")
-# dp = Data_Path("~/github/weto/data")
+dp = Data_Path("~/github/weto/data")
 
 # paths
 conus_path = dp.join("rasters/albers/acre/conus.tif")
