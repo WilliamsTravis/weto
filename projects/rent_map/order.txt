@@ -1,24 +1,31 @@
-"""
-The order of things. I could just describe which scripts to use, or create
-methods out of each one and import them all.
+This describes the order in which these scripts need to be run. This will
 
-Created on Fri Feb 14 10:25:58 2020
 
-@author: twillia2
-"""
 
-# Download data
+Travis Williams
+Feb 21st, 2020
+travis.williams@nrel.gov
 
-# Rasterize and warp to acre grids
-# 1 exclusions.py - Run this first so we can set the geometries with it
-# 2 nlcd, blm, tribal, state
+DOWNLOAD DATA
 
-# Assign codes with lookup table
+1) This has been mostly manual, it would be nice to automate this.
 
-# Mask layers in order -> exclusions, federal, tribal, state, private
+TRANSFORM AND ASSIGN CODES (codes from other project)
 
-# Stack masked layers and take max
+2) codes/exclusions.py
+3) codes/nlcd.py
+3) codes/blm.py
+4) codes/tribal.py
+5) codes/state.py
 
-# Calculate Coverage
+MASKING AND STACKING ROUTINE
 
-# Assign dollar values to codes
+6) mask_n_stack.py
+
+CALCULATE COVERAGE
+
+7) coverage.py
+
+MAP DOLLAR VALUES TO CODE MAP
+
+8) rent_map.py

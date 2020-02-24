@@ -8,20 +8,20 @@ Created on Mon Feb  3 12:35:54 2020
 @author: travis
 """
 import xarray as xr
-from weto.gdalmethods import to_raster
+from gdalmethods import to_raster
 
 # NLCD
 nlcd_path = ("https://s3-us-west-2.amazonaws.com/mrlc/NLCD_2016_Land_Cover"
              "_L48_20190424.zip")
 
 # BLM
-blm_path = ""
+blm_path = ("")
 
 # Tribal Land
-tribal_path = ""
+tribal_path = ("")
 
 # State Land
-state_path =  ""
+state_path =  ("")
 
 # Counte Boundaries
-cnty_path = ""
+cnty_path = ("")

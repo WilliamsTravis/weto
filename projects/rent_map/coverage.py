@@ -102,4 +102,6 @@ ddf.columns = ["developable_percentage"]
 
 # Composite Data Frame
 df = odf.join(ddf)
+df["area"] = df.index
+df = df[["area", "overall_percentage", "developable_percentage"]]
 df.to_csv(dp.join("tables/coverage.csv"), index=False)

@@ -42,11 +42,6 @@ from gdalmethods import warp, rasterize, Data_Path, reproject_polygon
 from gdalmethods import Map_Values, tile_raster
 from osgeo import ogr
 
-import xarray as xr
-import dask.array as da
-from dask.distributed import Client
-import os
-
 # paths
 # dp = Data_Path("~/Box/WETO 1.2/data")
 dp = Data_Path("/scratch/twillia2/weto/data")
