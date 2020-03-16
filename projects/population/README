@@ -1,0 +1,15 @@
+Landscan Population Grids
+
+We are attempting to use the LandScan "Ambient Population" product to characterize
+populations within supply curve points in reV runs. These datasets can be found
+here:
+
+https://landscan.ornl.gov/landscan-datasets
+
+These appear to come in ESRI geodatabases as counts. So we'll need to extract the
+rasters, reproject to our albers equal area conic projection, resample using mean
+and multiply by the number of resampled pixels per original pixel (summation isn't
+availabe for some reason). 
+
+Should we use each year available? How to incorporate day vs night time ambient
+populations.
