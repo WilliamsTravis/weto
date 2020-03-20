@@ -2,7 +2,6 @@ setup.py
 weto/__init__.py
 weto/command_holders.py
 weto/dask_raster.py
-weto/functions.py
 weto/gdalmethods.py
 weto.egg-info/PKG-INFO
 weto.egg-info/SOURCES.txt
