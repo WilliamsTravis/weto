@@ -40,6 +40,11 @@ GSSURGO_URLS = {
     "state": "https://nrcs.app.box.com/v/soils/folder/94128402340"
     }
 
+GNATSO_URLS = {
+    "conus": "https://nrcs.app.box.com/v/soils/folder/83297297479",
+    "state": "https://nrcs.app.box.com/v/soils/folder/84152602915"
+    }
+
 
 def get_gssurgo(state=None, dst="./"):
     """
@@ -78,6 +83,43 @@ def get_gssurgo(state=None, dst="./"):
               " since this is public. Go to " + base_url + ".")
 
 
+def get_gnatsgo(state=None, dst="./"):
+    """
+    Download and translate the Gridded Soil Survey Geographic Data Set from
+    the National Resource Conservation Service. If a state acronym is provided
+    this will download only data for that state.
+
+    Parameters
+    ----------
+    state : str, optional
+        Acronym of a US state. The default is None.
+    dst : str, optional
+        Path to target directly for storing gSSURGO. The default is "./".
+
+    Returns
+    -------
+    None.
+    """
+
+    # Build URL
+    if state:
+        state_name = state.upper()
+        base_url = GNATSO_URLS["state"]
+        url = os.path.join(base_url, "gSSURGO_" + state_name + ".gdb.zip")
+    else:
+        base_url = GNATSO_URLS["conus"]
+        url = os.path.join(base_url, "gSSURGO.gdb.zip")
+
+    # Download file
+    filename = os.path.join(dst, os.path.basename(url))
+    try:
+        urlretrieve(url, filename)
+    except:
+        print("I actually haven't written this in yet. It seems to require"
+              " a Box SDK API, but the authentication process is stupid"
+              " since this is public. Go to " + base_url + ".")
+
+
 def fix_mukey(mukey_tif):
     """The mukey tiff might come out with some odd values around the edges,
     which makes viewing it a bit tricky. This fixes that."""
@@ -97,9 +139,8 @@ def fix_mukey(mukey_tif):
         array = array.compute()
 
     # save
-    test_path = "/home/travis/data/weto/soil/test.tif"
     with rasterio.Env():
-        with rasterio.open(test_path, "w", **profile) as file:
+        with rasterio.open(mukey_tif, "w", **profile) as file:
             file.write(array[0].astype(rasterio.int32), 1)
 
 
@@ -129,8 +170,8 @@ def map_variable(gdb_path, mukey_path, variable, dst):
 
     Sample Arguments
     ----------------
-    mukey_path = "~/data/weto/soil/mukey_ri.tif"
-    gdb_path = "~/data/weto/soil/gSSURGO_RI.gdb"
+    mukey_path = "~/data/weto/soil/mukey_de.tif"
+    gdb_path = "~/data/weto/soil/gNATSGO_DE.gdb"
     dst = "~/data/weto/soil/brockdepmin.tif"
     variable = "brockdepmin"
     """
@@ -169,9 +210,6 @@ def map_variable(gdb_path, mukey_path, variable, dst):
                         variable_df[variable]))
     mv = Map_Values(val_dict, err_val=-9999)
     mv.map_file(mukey_path, dst)
-
-
-
 
 
 

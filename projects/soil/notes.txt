@@ -1,0 +1,24 @@
+WETO Soil Notes
+
+
+Examining the possibility of create a map of depth to rockbottom and 
+maps of soil classifications at different depths. This is intended to
+help refine construction restraints/costs for wind turbine projects. 
+We are using gSSURGO and gNATSGO. gNATSGO combine gSSURGO, STATSGO,
+and the newer Raster Soil Survey (limited space only) to try and fill
+in gaps in coverage.
+
+- Maps of depth to rock bottom are proving to be quite sparse. There are
+areas where it might be worth it to interpol
+
+- The categorization of soil types at different depths is an ongoing project
+for me, and I imagine we will encounter similar coverage issues as with
+depth to rock bottom estimates. 
+
+- It is likely that the sparseness of these coverages will necessitate
+some sort of interpolation or statistical estimation method:
+
+
+  - SoilGrids250m: Global gridded soil information based on machine learning
+     https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5313206/
+
