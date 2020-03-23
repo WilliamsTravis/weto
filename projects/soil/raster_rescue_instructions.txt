@@ -1,0 +1,20 @@
+Arc Raster Rescue Installation Instructions
+
+To use this python wrapper to rescue a raster from an ESRI Geodatabase follow
+these steps:
+    
+    1) Clone this repository:
+
+        https://github.com/r-barnes/ArcRasterRescue.git
+    
+    2) In this directory run:
+
+        `make`
+
+    3) An .exe file will be created. Either provide the containing directory
+       path of this file as the "exe_dir" argument to the 'arc_raster' python
+       method or set its full path to this alias:
+
+       'alias arc_raster=/path/to/file.exe'
+    
+    4) Run mukey_rescue(path_to_gdb, **kwargs)

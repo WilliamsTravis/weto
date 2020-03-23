@@ -27,6 +27,7 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import rasterio 
+import subprocess as sp
 import xarray as xr
 
 from dask.distributed import Client
@@ -44,6 +45,34 @@ GNATSO_URLS = {
     "conus": "https://nrcs.app.box.com/v/soils/folder/83297297479",
     "state": "https://nrcs.app.box.com/v/soils/folder/84152602915"
     }
+
+RESCUE_INSTRUCTIONS = open(
+    os.path.expanduser(
+        "~/github/weto/projects/soil/raster_rescue_instructions.txt")
+    ,"r").read()
+
+def fix_mukey(mukey_tif):
+    """The mukey tiff might come out with some odd values around the edges,
+    which makes viewing it a bit tricky. This fixes that."""
+
+    mukey_tif = os.path.expanduser(mukey_tif)
+
+    # For the profile
+    profile = rasterio.open(mukey_tif).profile
+
+    # For the data array
+    mukey = xr.open_rasterio(mukey_tif, chunks=(1, 5000, 5000))
+
+    # Change everything under 0 to the nan value
+    array = mukey.data
+    array[array < 0] = profile["nodata"]
+    with Client():
+        array = array.compute()
+
+    # save
+    with rasterio.Env():
+        with rasterio.open(mukey_tif, "w", **profile) as file:
+            file.write(array[0].astype(rasterio.int32), 1)
 
 
 def get_gssurgo(state=None, dst="./"):
@@ -78,9 +107,11 @@ def get_gssurgo(state=None, dst="./"):
     try:
         urlretrieve(url, filename)
     except:
-        print("I actually haven't written this in yet. It seems to require"
-              " a Box SDK API, but the authentication process is stupid"
-              " since this is public. Go to " + base_url + ".")
+        print("Getting gSSURO. I actually haven't written this in yet. It "
+              "seems to require a Box SDK API, but the authentication process "
+              "is stupid since this is public. \n For states go to " +
+              GSSURGO_URLS["state"] + ". \n For CONUS go to " +
+              GSSURGO_URLS["conus"] + ".\n")
 
 
 def get_gnatsgo(state=None, dst="./"):
@@ -115,34 +146,11 @@ def get_gnatsgo(state=None, dst="./"):
     try:
         urlretrieve(url, filename)
     except:
-        print("I actually haven't written this in yet. It seems to require"
-              " a Box SDK API, but the authentication process is stupid"
-              " since this is public. Go to " + base_url + ".")
-
-
-def fix_mukey(mukey_tif):
-    """The mukey tiff might come out with some odd values around the edges,
-    which makes viewing it a bit tricky. This fixes that."""
-
-    mukey_tif = os.path.expanduser(mukey_tif)
-
-    # For the profile
-    profile = rasterio.open(mukey_tif).profile
-
-    # For the data array
-    mukey = xr.open_rasterio(mukey_tif, chunks=(1, 5000, 5000))
-
-    # Change everything under 0 to the nan value
-    array = mukey.data
-    array[array < 0] = profile["nodata"]
-    with Client():
-        array = array.compute()
-
-    # save
-    with rasterio.Env():
-        with rasterio.open(mukey_tif, "w", **profile) as file:
-            file.write(array[0].astype(rasterio.int32), 1)
-
+        print("Getting gNATSGO. I actually haven't written this in yet. It "
+              "seems to require a Box SDK API, but the authentication process "
+              "is stupid since this is public. \n For states go to " +
+              GNATSO_URLS["state"] + ". \n For CONUS go to " +
+              GNATSO_URLS["conus"] + ".\n")
 
 def map_variable(gdb_path, mukey_path, variable, dst):
     """
@@ -158,7 +166,6 @@ def map_variable(gdb_path, mukey_path, variable, dst):
         Name of the soil variable to be mapped.
     dst : str
         Path to destination file.
-
 
     Notes
     -----
@@ -181,26 +188,22 @@ def map_variable(gdb_path, mukey_path, variable, dst):
     gdb_path = os.path.expanduser(gdb_path)
     dst = os.path.expanduser(dst)
 
-    # Get all layers
-    # layers = fiona.listlayers(gdb_path)
-    # dbs = {}
-    # for l in layers:
-    #     df = gpd.read_file(gdb_path, layer=l)
-    #     columns = df.columns
-    #     keys = [c for c in columns if "key" in c]
-    #     if keys:
-    #         dbs[l] = keys
-
     # Get the Map Unit Aggregated Attribute Table
     mukey = xr.open_rasterio(mukey_path, chunks=(1, 5000, 5000))
     muaggatt = gpd.read_file(gdb_path, layer="muaggatt")
     chorizon = gpd.read_file(gdb_path, layer="chorizon")
-    component = gpd.read_file(gdb_path, layer="component")
-    component = pd.merge(chorizon, component, on="cokey")
-    component = pd.merge(component, muaggatt, on="mukey")
+    components = gpd.read_file(gdb_path, layer="component")
+    components = pd.merge(chorizon, components, on="cokey")
+    components = pd.merge(components, muaggatt, on="mukey")
+
+    # Put the keys in front
+    keys = [c for c in components.columns if "key" in c]
+    others = [c for c in components.columns if "key" not in c]
+    new_order = keys + others
+    components = components[new_order]
 
     # Get the Horizon Table
-    variable_df = component[["mukey", variable]]
+    variable_df = components[["mukey", "chkey", "hzname", variable]]
     units = muaggatt[["mukey", "muname"]]
     variable_df = pd.merge(variable_df, units, on="mukey")
     variable_df = variable_df.dropna()
@@ -211,6 +214,124 @@ def map_variable(gdb_path, mukey_path, variable, dst):
     mv = Map_Values(val_dict, err_val=-9999)
     mv.map_file(mukey_path, dst)
 
+
+def mukey_rescue(gdb, raster_id=None, save=None,
+                 exe_dir="~/github/ArcRasterRescue"):
+    """Use the program Arc Raster Rescue from this fellow to extract the
+    10m mukey raster from the ESRI Geodatabases (vectors are taken care of)
+    
+    https://github.com/r-barnes/ArcRasterRescue
+    """
+
+    # Expand user paths
+    exe = os.path.join(os.path.expanduser(exe_dir), "arc_raster.exe")
+    gdb = os.path.expanduser(gdb)
+    save = os.path.expanduser(save)
+
+    # Output file path
+    if not gdb[-1] == "/":
+        gdb = gdb + "/"
+
+    # Try to detect rasters without raster_id, or rescue with
+    if raster_id is None:
+        call = [exe, gdb]
+    else:
+        if save is None:
+            raise KeyError("No save path provided.")
+        call = [exe, gdb, raster_id, save]
+
+    try:
+        x = sp.call(call)
+    except Exception as e:
+        print(e)
+        print(RESCUE_INSTRUCTIONS)
+
+    fix_mukey(save)
+
+
+
+class Map_Soil:
+    """Methods for mapping different soil properties at different depths.
+    
+    Sample Arguments
+    ----------------
+    mukey_path = "~/data/weto/soil/mukey_de.tif"
+    gdb_path = "~/data/weto/soil/gNATSGO_DE.gdb"
+    dst = "~/data/weto/soil/brockdepmin.tif"
+    variable = "brockdepmin"
+    """
+
+    def __init__(self, gdb_path, mukey_path):
+        """Initialize Map_Soil instance."""
+
+        self.gdb_path = os.path.expanduser(gdb_path)
+        self.mukey_path = os.path.expanduser(mukey_path)
+
+    def __repr__(self):
+        
+        attrs = ["{}='{}'".format(k, v) for k, v in self.__dict__.items()]
+        attrs_str = " ".join(attrs)
+        msg = "<Map_Soil {}> ".format(attrs_str)
+
+        return msg
+
+
+    def set_table(self):
+        """
+        Create a raster attribute table with component and horizon values.
+    
+        Parameters
+        ----------
+        gdb_path : str
+            Path to ESRI gSSRUGO Geodatabase
+        mukey_path : str
+            Path to a raster of the gSSURGO's 10 m map unit key raster.
+        variable : str
+            Name of the soil variable to be mapped.
+        dst : str
+            Path to destination file.
+    
+        Notes
+        -----
+        Variable descriptions:
+            https://data.nal.usda.gov/system/files/SSURGO_Metadata_-_Table_Column_Descriptions.pdf#page=81
+    
+        Units:
+            https://jneme910.github.io/CART/chapters/Soil_Propert_List_and_Definition
+    
+
+        """
+    
+        # Expand user path
+        mukey_path = os.path.expanduser(mukey_path)
+        gdb_path = os.path.expanduser(gdb_path)
+        dst = os.path.expanduser(dst)
+    
+        # Get the Map Unit Aggregated Attribute Table
+        mukey = xr.open_rasterio(mukey_path, chunks=(1, 5000, 5000))
+        muaggatt = gpd.read_file(gdb_path, layer="muaggatt")
+        chorizon = gpd.read_file(gdb_path, layer="chorizon")
+        components = gpd.read_file(gdb_path, layer="component")
+        components = pd.merge(chorizon, components, on="cokey")
+        components = pd.merge(components, muaggatt, on="mukey")
+    
+        # Put the keys in front
+        keys = [c for c in components.columns if "key" in c]
+        others = [c for c in components.columns if "key" not in c]
+        new_order = keys + others
+        components = components[new_order]
+    
+        # Get the Horizon Table
+        variable_df = components[["mukey", "chkey", "hzname", variable]]
+        units = muaggatt[["mukey", "muname"]]
+        variable_df = pd.merge(variable_df, units, on="mukey")
+        variable_df = variable_df.dropna()
+    
+        # Now, whats the best way to map these values
+        val_dict = dict(zip(variable_df["mukey"].astype(int),
+                            variable_df[variable]))
+        mv = Map_Values(val_dict, err_val=-9999)
+        mv.map_file(mukey_path, dst)
 
 
 class Site_Soil:
