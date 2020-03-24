@@ -1,10 +1,12 @@
-This describes the order in which these scripts need to be run. This will
-
-
+This describes the order in which these scripts need to be run.
+This needs to be cleaned up.
 
 Travis Williams
 Feb 21st, 2020
 travis.williams@nrel.gov
+
+
+STEPS:
 
 DOWNLOAD DATA
 

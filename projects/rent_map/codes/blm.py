@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 Rasterize BLM zone and state land lookup codes.
@@ -20,11 +19,11 @@ Created on Mon Feb  3 09:30:06 2020
 
 @author: twillia2
 """
+
 import camelot
 import geopandas as gpd
 import os
 import pandas as pd
-import rasterio
 import requests
 from osgeo import gdal
 from gdalmethods import Data_Path, rasterize
