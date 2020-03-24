@@ -16,6 +16,7 @@ import subprocess as sp
 from gdalmethods import Data_Path, Map_Values
 from glob import glob
 
+
 # Set Data Path
 DP = Data_Path("~/data/weto/rent_map")
 
@@ -45,6 +46,7 @@ def tile():
              "-targetDir", code_tile_folder,
              code_path])
     code_tiles = glob(os.path.join(code_tile_folder, "*tif"))
+
     return code_tiles
 
 
@@ -53,6 +55,7 @@ def map_costs(lookup, code_tiles):
     val_dict = dict(zip(lookup["code"], lookup["dollar_ac"]))
     mv = Map_Values(val_dict)
     cost_tiles = mv.map_files(code_tiles, cost_tile_folder, ncpu=4)
+
     return cost_tiles
 
 
