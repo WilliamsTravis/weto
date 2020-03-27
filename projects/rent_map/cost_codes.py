@@ -17,7 +17,7 @@ from osgeo import gdal
 
 from dask.distributed import Client
 from gdalmethods import Data_Path, to_raster
-
+from tqdm import tqdm
 
 # Data Paths
 DP = Data_Path("/scratch/twillia2/weto/data")
@@ -52,15 +52,15 @@ def gmask(array, navalues=(-9999., 0.0)):
 # Make a conus mask with 1s for in and nans for out
 def conus_mask():
     if not os.path.exists(DPM.join("conus.tif")):
+        print("Creating CONUS mask...")
         template = DP.join("rasters/albers/acre/nlcd.tif")
         conus = xr.open_rasterio(template, chunks=CHUNKS)[0].data
-        conus[conus > 0] = 1
-        conus[conus <= 0] = np.nan
+        conus = conus.astype("float32")
+        conus[conus == 0.] = np.nan
+        conus = (conus * 0) + 1
         with Client():
             conus = conus.compute()
-            print("Saving Conus")
-            to_raster(conus, DPM.join("conus.tif"), PROJ, GEOM)
-            del conus
+        to_raster(conus, DPM.join("conus.tif"), PROJ, GEOM, dtype="float32")
 
 
 # Code paths
@@ -70,17 +70,17 @@ def code_paths():
     paths["blm_path"] = DP.join("rasters/albers/acre/blm_codes.tif")
     paths["tribal_path"] = DP.join("rasters/albers/acre/tribal_codes.tif")
     paths["state_path"] = DP.join("rasters/albers/acre/state_codes.tif")
-    paths["excl_path"] = DP.join("rasters/albers/acre/inverse_exclusions.tif")
+    paths["excl_path"] = DP.join("rasters/albers/acre/rent_exclusions.tif")
 
     return paths
 
 
 def build_masks():
-    
+
     # Pull paths out
     paths = code_paths()
     nlcd_path = paths["nlcd_path"]
-    blm_path = paths["blm_path"]   
+    blm_path = paths["blm_path"]
     tribal_path = paths["tribal_path"]
     state_path = paths["state_path"]
     excl_path = paths["excl_path"]
@@ -91,16 +91,16 @@ def build_masks():
     tribes = xr.open_rasterio(tribal_path, chunks=CHUNKS)[0].data
     state = xr.open_rasterio(state_path, chunks=CHUNKS)[0].data
     excl = xr.open_rasterio(excl_path, chunks=CHUNKS)[0].data
-    
-    # I need to fix this...nlcd's shape is off by one cell from my tiling/merging
+
+    # I need to fix this...nlcd's shape is off by one cell
     if nlcd.shape != blm.shape:
         # One too many on top
         nlcd = nlcd[1:, :]
-    
+
         # Now we need two on bottom
         x = da.from_array(np.zeros((1, nlcd.shape[1])))
         nlcd = np.vstack((nlcd, x, x))
-    
+
         # and one extra on the side
         y = da.from_array(np.zeros((nlcd.shape[0], 1)))
         nlcd = np.hstack((nlcd, y))
@@ -113,13 +113,13 @@ def build_masks():
     bmask = gmask(blm)
     tmask = gmask(tribes)
     smask = gmask(state)
-    
+
     # Make four composite masks, the max will bring 1s to the front
     mask1 = da.stack([emask, bmask, tmask, smask], axis=0).max(axis=0)
     mask2 = da.stack([emask, bmask, tmask], axis=0).max(axis=0)
     mask3 = da.stack([emask, bmask], axis=0).max(axis=0)
     mask4 = emask
-    
+
     # Now we actually want the inverse of these (1 -> 0 -> 0 ; 0 -> -1 -> 1)
     mask1 = (mask1 - 1) * -1
     mask2 = (mask2 - 1) * -1
@@ -139,9 +139,10 @@ def build_masks():
              "state": mask2,
              "tribes": mask3,
              "blm": mask4}
-    
+
     # Loop through, the lowest priority layers are masked by the largest mask <---- This is obviously not the best way to do this
-    for key, layer in layers.items():
+    print("Masking individual layers...")
+    for key, layer in tqdm(layers.items(), position=0):
         layer_path = masked_paths[key]
         mask = masks[key]
         mlayer = layer * mask
@@ -156,22 +157,25 @@ def build_masks():
 def composite(masked_paths):
     
     # Too much at once, read the precomputd masked layers from file
-    excl_path = DP.join("rasters/albers/acre/inverse_exclusions.tif")
+    excl_path = DP.join("rasters/albers/acre/rent_exclusions.tif")
     excl = xr.open_rasterio(excl_path, chunks=CHUNKS)[0].data
     mblm = xr.open_rasterio(masked_paths["blm"], chunks=CHUNKS)[0].data
     mtribes = xr.open_rasterio(masked_paths["tribes"], chunks=CHUNKS)[0].data
     mstate = xr.open_rasterio(masked_paths["state"], chunks=CHUNKS)[0].data
     mnlcd = xr.open_rasterio(masked_paths["nlcd"], chunks=CHUNKS)[0].data
     mconus = xr.open_rasterio(DPM.join("conus.tif"), chunks=CHUNKS)[0].data
-    
+
+    print("Merging layers ...")
     with Client():
         layers = [excl, mblm, mtribes, mstate, mnlcd]
-        composite = da.stack(layers, axis=0).max(axis=0)
-        composite = composite * mconus
-        final = composite.compute()
-    
+        composite_layer = da.stack(layers, axis=0).max(axis=0)
+        composite_layer = composite_layer * mconus
+        final = composite_layer.compute()
+
     # Save to file
-    to_raster(final, DP.join("rasters/albers/acre/cost_codes.tif"), PROJ, GEOM)
+    save = DP.join("rasters/albers/acre/cost_codes.tif")
+    print("Saving file to " + save + " ...")
+    to_raster(final, save, PROJ, GEOM)
 
 
 def main():

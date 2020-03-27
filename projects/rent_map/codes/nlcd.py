@@ -45,7 +45,7 @@ from osgeo import ogr
 # paths
 # dp = Data_Path("~/Box/WETO 1.2/data")
 dp = Data_Path("/scratch/twillia2/weto/data")
-template_path = dp.join("rasters/albers/acre/inverse_exclusions.tif")
+template_path = dp.join("rasters/albers/acre/rent_exclusions.tif")
 nlcd_img_path = dp.join("rasters/NLCD/NLCD_2016_Land_Cover_L48_20190424.img")
 nlcd_tif_path = dp.join("rasters/NLCD/NLCD_2016_Land_Cover_L48_20190424.tif")
 nlcd_acre_path = dp.join("rasters/albers/acre/nlcd.tif")

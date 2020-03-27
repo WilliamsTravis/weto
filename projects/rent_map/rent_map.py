@@ -8,7 +8,6 @@ Created on Fri Feb 21 10:02:49 2020
 @author: twillia2
 """
 
-import numpy as np
 import os
 import pandas as pd
 import subprocess as sp
@@ -18,7 +17,8 @@ from glob import glob
 
 
 # Set Data Path
-DP = Data_Path("~/data/weto/rent_map")
+# DP = Data_Path("~/data/weto/rent_map")
+DP = Data_Path("/scratch/twillia2/weto/data")
 
 
 def fixit(x):
@@ -39,6 +39,7 @@ def table():
 
 def tile():
     code_path = DP.join("rasters/albers/acre/cost_codes.tif")
+    print("Tiling " + code_path + "...")
     code_tile_folder = DP.join("rasters/albers/acre/code_tiles")
     os.makedirs(code_tile_folder, exist_ok=True)
     sp.call(["gdal_retile.py",
@@ -52,6 +53,7 @@ def tile():
 
 def map_costs(lookup, code_tiles):
     cost_tile_folder = DP.join("rasters/albers/acre/cost_tiles")
+    print("Mapping costs to code tiles...")
     val_dict = dict(zip(lookup["code"], lookup["dollar_ac"]))
     mv = Map_Values(val_dict)
     cost_tiles = mv.map_files(code_tiles, cost_tile_folder, ncpu=4)
@@ -61,6 +63,7 @@ def map_costs(lookup, code_tiles):
 
 def merge_costs(cost_tiles):
     cost_file = DP.join("rasters/albers/acre/rent_map.tif")
+    print("Merging cost tiles into " + cost_file + "...")
     call =  ["gdal_merge.py", "-o", cost_file] + cost_tiles
     sp.call(call)
 
@@ -71,6 +74,6 @@ def main():
     cost_tiles = map_costs(lookup, code_tiles)
     merge_costs(cost_tiles)
 
-# Done.
+
 if __name__ == "__main__":
     main()
