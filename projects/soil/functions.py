@@ -22,12 +22,13 @@ Created on Tue Mar 17 12:57:29 2020
 """
 
 import os
+import subprocess as sp
+
 import fiona
 import geopandas as gpd
 import numpy as np
 import pandas as pd
 import rasterio 
-import subprocess as sp
 import xarray as xr
 
 from dask.distributed import Client
@@ -154,7 +155,9 @@ def get_gnatsgo(state=None, dst="./"):
 
 def map_variable(gdb_path, mukey_path, variable, dst):
     """
-    Create a map of a SSURGO soil variable.
+    Create a dataset of a SSURGO soil variable at all available horizons. The
+    dataset will contain n layers corresponding to the maximum number of
+    available soil horizons across all cells.
 
     Parameters
     ----------
@@ -179,7 +182,7 @@ def map_variable(gdb_path, mukey_path, variable, dst):
     ----------------
     mukey_path = "~/data/weto/soil/mukey_de.tif"
     gdb_path = "~/data/weto/soil/gNATSGO_DE.gdb"
-    dst = "~/data/weto/soil/brockdepmin.tif"
+    dst = "~/data/weto/soil/brockdepmin_de.tif"
     variable = "brockdepmin"
     """
 
@@ -190,8 +193,10 @@ def map_variable(gdb_path, mukey_path, variable, dst):
 
     # Get the Map Unit Aggregated Attribute Table
     mukey = xr.open_rasterio(mukey_path, chunks=(1, 5000, 5000))
+    umukeys = np.unique(mukey[:]).astype(str)
     muaggatt = gpd.read_file(gdb_path, layer="muaggatt")
     chorizon = gpd.read_file(gdb_path, layer="chorizon")
+    cogeomordesc = gpd.read_file(gdb_path, layer="cogeomordesc")
     components = gpd.read_file(gdb_path, layer="component")
     components = pd.merge(chorizon, components, on="cokey")
     components = pd.merge(components, muaggatt, on="mukey")
@@ -203,10 +208,12 @@ def map_variable(gdb_path, mukey_path, variable, dst):
     components = components[new_order]
 
     # Get the Horizon Table
-    variable_df = components[["mukey", "chkey", "hzname", variable]]
-    units = muaggatt[["mukey", "muname"]]
-    variable_df = pd.merge(variable_df, units, on="mukey")
-    variable_df = variable_df.dropna()
+    munits = muaggatt[["mukey", "muname"]]
+    variable_df = pd.merge(variable_df, munits, on="mukey")
+    variable_df = components[["mukey", "chkey", "muname", "hzname", "geomdesc",
+                              "desgnmaster", "hzdept_r", "hzdepb_r", "hzthk_r",
+                              "sandtotal_r", "silttotal_r", "claytotal_r", 
+                              variable]]
 
     # Now, whats the best way to map these values
     val_dict = dict(zip(variable_df["mukey"].astype(int),
